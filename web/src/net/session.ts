@@ -13,7 +13,17 @@ export interface Session {
 let current: Session | null = null;
 let releaseTimer: ReturnType<typeof setTimeout> | null = null;
 
+const DEV_SERVER_KEY = "tank-ctf:server";
+
 function serverUrl(): string {
+  // Dev only: `?server=ws://localhost:2571` points this tab at another game server (e.g. one
+  // started with COLYSEUS_LATENCY to feel lag). Remembered for the tab's session.
+  if (process.env.NODE_ENV !== "production") {
+    const override = new URLSearchParams(location.search).get("server");
+    if (override) sessionStorage.setItem(DEV_SERVER_KEY, override);
+    const saved = sessionStorage.getItem(DEV_SERVER_KEY);
+    if (saved) return saved;
+  }
   // Same host as the page, so phones on the same Wi-Fi reach the dev server too.
   const fallback = `${location.protocol === "https:" ? "wss" : "ws"}://${location.hostname}:2567`;
   return process.env.NEXT_PUBLIC_SERVER_URL || fallback;

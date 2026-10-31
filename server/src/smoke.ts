@@ -3,9 +3,18 @@
 import assert from "node:assert/strict";
 import { Client } from "@colyseus/sdk";
 import { MSG, ROOM_NAME, type RoomInfo, type Roster, type Snapshot } from "@tank/shared";
+import { BotButton } from "./botButton";
 
 const url = process.env.SERVER_URL ?? "ws://localhost:2567";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// Like sleep, but keeps a bot's button samples flowing, as a real client does.
+async function play(button: BotButton, ms: number) {
+  const end = performance.now() + ms;
+  while (performance.now() < end) {
+    button.flush();
+    await sleep(15);
+  }
+}
 
 const ann = await new Client(url).create(ROOM_NAME, { name: "Ann", team: "red" });
 assert.match(ann.roomId, /^[A-Z]{4}$/, "room id should be a 4-letter code");
@@ -39,21 +48,26 @@ assert.equal(missing.status, 404);
 const annTank = () => snaps.at(-1)!.state.tanks.find((t) => t.id === ann.sessionId)!;
 assert.ok(annTank(), "Ann's soldier should be in Bob's snapshots");
 
-// Tap: down and up in the same message still fires.
+const annButton = new BotButton(ann);
+await play(annButton, 200);
+
+// Tap: a single sample with pressed and not held still fires.
 const before = snaps.length;
-ann.send(MSG.input, { held: false, pressed: true });
-await sleep(200);
+annButton.tap();
+await play(annButton, 200);
 const fired = snaps.slice(before).some((s) => s.events.some((e) => e.type === "fire" && e.tankId === ann.sessionId));
 assert.ok(fired, "a tap should fire");
 
 // Hold to walk, then release.
 const start = { x: annTank().x, y: annTank().y };
-ann.send(MSG.input, { held: true, pressed: false });
-await sleep(600);
-ann.send(MSG.input, { held: false, pressed: false });
-await sleep(100);
+annButton.hold(true);
+await play(annButton, 600);
+annButton.hold(false);
+await play(annButton, 100);
 const moved = Math.hypot(annTank().x - start.x, annTank().y - start.y);
 assert.ok(moved > 30, `holding should walk, moved ${moved.toFixed(1)} px`);
+const lastAck = snaps.at(-1)!.acks[ann.sessionId] ?? 0;
+assert.ok(lastAck > 40, `server should ack Ann's samples, last ack ${lastAck}`);
 
 await bob.leave();
 await sleep(200);

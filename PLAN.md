@@ -44,16 +44,19 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
   (shield, speed, flare), top-down soldier art with fallen bodies, mobile TAP button.
   37 sim tests.
 - Phase 2 done (online): create a room on `/`, share the 4-letter code or `/room/CODE` link,
-  up to 8 players on one map. The server runs the shared sim at 60 Hz, clients send only button
-  down/up and play back 30 Hz snapshots ~100 ms behind (no prediction yet). Players pick Red or
+  up to 8 players on one map. The server runs the shared sim at 60 Hz from per-tick button
+  samples and broadcasts 30 Hz snapshots; clients predict their own soldier and show others
+  ~100 ms behind (see `docs/NETCODE.md`). Players pick Red or
   Blue when joining (temporary until the phase 3 lobby). Name tags over soldiers, yours in gold.
   The join form shows each team's players live (`GET /rooms/CODE` on the game server), so
   you can see the teams before picking one. Two-bot smoke test: `npm run smoke -w server`.
 
 ## Known gaps after phase 2
 - 8-player load test passed (see `docs/NETCODE.md`): steady 60 Hz server, 30 Hz snapshots, no
-  hitches, identical state for all. Weak spot is input delay: ~120 ms on the same Wi-Fi,
-  ~220 ms with a 100 ms internet round trip. Fix: client prediction for your own soldier.
+  hitches, identical state for all.
+- Input delay fixed with client prediction: your own soldier reacts in ~5–18 ms (was ~120 ms
+  on the same machine, ~220 ms at a 100 ms round trip). Other players are still shown ~100 ms
+  behind for smoothness.
 - Snapshots send the full state as JSON-like messages (~a few KB each). Fine for 8 players on
   a LAN or one server region; trim fields if bandwidth becomes a problem.
 - A refresh or dropped connection loses your soldier (rejoin with the link). Reconnect is phase 3.

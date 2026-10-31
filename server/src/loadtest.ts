@@ -7,6 +7,7 @@
 import { Client, type Room } from "@colyseus/sdk";
 import { MAX_PLAYERS, MSG, ROOM_NAME, TICK_MS, type Snapshot } from "@tank/shared";
 import { pack } from "msgpackr";
+import { BotButton } from "./botButton";
 
 const url = process.env.SERVER_URL ?? "ws://localhost:2567";
 const PLAYERS = Number(process.env.PLAYERS ?? 8);
@@ -33,8 +34,10 @@ class Bot {
   private ammo = 6;
   private holdingUntil = 0;
   private nextActionAt = performance.now() + rand(200, 800);
+  private button: BotButton;
 
   constructor(public room: Room) {
+    this.button = new BotButton(room);
     room.onMessage(MSG.roster, () => {});
     room.onMessage(MSG.snapshot, (snap: Snapshot) => this.onSnapshot(snap));
   }
@@ -66,9 +69,14 @@ class Bot {
 
   // Random play: short taps (measured) and walks of 0.2-0.9 s.
   act(now: number) {
+    this.decide(now);
+    this.button.flush(now);
+  }
+
+  private decide(now: number) {
     if (this.holdingUntil) {
       if (now >= this.holdingUntil) {
-        this.room.send(MSG.input, { held: false, pressed: false });
+        this.button.hold(false);
         this.holdingUntil = 0;
         this.nextActionAt = now + rand(250, 800);
       }
@@ -76,11 +84,11 @@ class Bot {
     }
     if (now < this.nextActionAt) return;
     if (Math.random() < 0.5 && this.ammo > 0 && this.pendingPressAt === null) {
-      this.room.send(MSG.input, { held: false, pressed: true });
+      this.button.tap();
       this.pendingPressAt = now;
       this.nextActionAt = now + rand(250, 800);
     } else {
-      this.room.send(MSG.input, { held: true, pressed: false });
+      this.button.hold(true);
       this.holdingUntil = now + rand(200, 900);
     }
   }

@@ -1,54 +1,63 @@
 # Netcode and test results
 
 ## How it works
-- The server runs the shared sim at 60 Hz. Players send only button down/up (a few bytes,
-  only when it changes). A press that starts and ends between two ticks still counts.
-- Every 2nd tick (30 Hz) the server broadcasts a snapshot: the full game state plus the events
-  since the last one.
-- Clients draw `INTERP_DELAY_MS` (100 ms) behind the newest snapshot and blend between the two
-  around that time, so motion is smooth even when snapshots arrive unevenly.
-- No client prediction yet: your own soldier is also shown from snapshots.
+- The server runs the shared sim at 60 Hz. Each client samples its button once per sim tick,
+  numbers the sample (`seq`) and sends it (batched per frame, a few bytes each).
+- The server keeps a small queue of samples per player (`InputQueue`, `shared/src/prediction.ts`)
+  and applies exactly one per tick. It normally holds about 2 samples to ride out jitter; a
+  bigger backlog is drained one extra sample per tick, and a tap is never lost when samples are
+  merged.
+- Every 2nd tick (30 Hz) the server broadcasts a snapshot: the full game state, the events since
+  the last one, and per player the `ack` (last sample applied).
+- **Your own soldier is predicted** (`Predictor`): the client runs the shared sim ahead with
+  your own samples, so turning, walking and shooting show on the next frame. When a snapshot
+  arrives it restarts from the server state and replays the samples the server hasn't applied
+  yet. Small disagreements glide into place over ~100 ms; big ones (respawn) snap.
+- Your bullets, crates and power boxes come from the same prediction, so they line up with you.
+- **Other players** are drawn `INTERP_DELAY_MS` (100 ms) behind the newest snapshot, blending
+  between the two around that time, so they move smoothly even when packets arrive unevenly.
 
-## Load test
-`npm run loadtest -w server` (with the server running). Env: `SERVER_URL`, `PLAYERS` (8),
-`SECONDS` (20). Bots tap and walk at random. Run the server with `TICK_STATS=1` to log tick
-timing, and with `COLYSEUS_LATENCY=<ms>` to simulate a round trip.
+## Testing it
+- `npm run loadtest -w server` (server running): bots tap and walk at random and the script
+  reports tick rate, snapshot jitter, press-to-shot time (as the server and other players see
+  it), snapshot size and whether all players saw identical state. Env: `SERVER_URL`,
+  `PLAYERS` (8), `SECONDS` (20).
+- Server env: `TICK_STATS=1` logs tick cost; `COLYSEUS_LATENCY=<ms>` simulates a round trip.
+- Browser, dev only: `?server=ws://localhost:2571` points a tab at another game server, and
+  `window.__net` shows frames, starved frames, prediction corrections and samples in flight.
 
-## Results, 31 Oct 2026 (MacBook, server and clients on the same machine)
-8 players, 20 s each run.
+## Results, 31 Oct 2026 (MacBook; server, bots and browser on the same machine)
 
-| | Same machine | 100 ms simulated round trip |
+### Before prediction (commit 9cf5592)
+| | Same machine | 100 ms round trip |
 |---|---|---|
-| Server ticks/s | 60.0 | 60.2 |
-| Server tick cost | avg 0.25–0.35 ms, max 1.9 ms (of a 16.7 ms budget) | same |
-| Snapshots per player | 30.0/s | 30.1–30.6/s |
-| Gap between snapshots | median 33.7, p95 35, p99 48.5, max 50 ms | median 33.6, p95 35, max 51 ms |
-| Press → shot in a snapshot | median 18 ms, p95 34 ms | median 121 ms, p95 137 ms |
-| Taps that never produced a shot | 0 of 80 | 0 of 65 |
-| Snapshot size | ~2.7 KB, ~80 KB/s per player | same |
-| Players seeing the same state | 4,207 ticks compared, 0 differed | 4,248 compared, 0 differed |
-| 9th player | rejected, room full | rejected |
+| Server ticks/s, tick cost | 60.0, ~0.3 ms (max 1.9) | 60.2, same |
+| Snapshots per player, gaps | 30/s, p99 49 ms | 30/s, p99 49 ms |
+| Press → shot (server) | 18 ms median | 121 ms median |
+| **Press → you see your soldier react** | **~120 ms** | **~220 ms** |
+| Same state for all players | 0 of 4,207 ticks differed | 0 of 4,248 differed |
 
-Browser as the 8th player with 7 bots (same machine), 8 s measured:
-961 frames at 120 fps (frame time median 8.3 ms, max 9.4 ms), 0 frames that ran out of
-snapshots, 2–3 snapshots always buffered ahead of the render time.
-
-## What a player feels
-Time from pressing until you see your own soldier react:
-
-| Connection | Server sees it | You see it (+100 ms smoothing buffer) |
+### With prediction
+| | Same machine | 100 ms round trip |
 |---|---|---|
-| Same Wi-Fi / same machine | ~18 ms | ~120 ms |
-| Internet, 100 ms round trip | ~121 ms | ~220 ms |
+| **Tap → your soldier visibly reacts** (browser, 10 taps) | **median 5 ms, max 8 ms** | **median 7–12 ms, max 18 ms** |
+| Hold → walking (includes the 60 ms hold threshold) | 66 ms | — |
+| Press → shot as others/server see it (8 bots) | median 25 ms, p95 43 ms | median 126 ms, p95 144 ms |
+| Prediction corrections | 0 | 4 of 339 snapshots, largest 5.7 px (eased) |
+| Other players' smoothness (browser) | 0 starved frames | 0 of 1,354 frames starved |
+| Server ticks/s, tick cost | 60.0 | 60.0, ~0.5 ms (max 1.8) |
+| Same state for all players | 0 of 4,200 differed | 0 of 4,249 differed |
+| Taps lost | 0 | 0 |
+| Snapshot size | ~2.8 KB, ~83 KB/s per player | same |
 
-The sync itself is solid: steady 30 Hz, no hitches, identical state for everyone, and the
-server is at about 2% load with 8 players. The weak spot is input delay. In a one-button game
-you time your tap to the spinning gun, so 120–220 ms of delay will make aiming feel late.
+Your own controls now feel instant whatever the ping. What remains is physics: other players
+see your actions after about half the round trip plus a tick or two, and you see them ~100 ms
+behind (the smoothing buffer). That is normal for online games and hard to notice in play.
 
-## Planned improvements (in order)
-1. Client prediction for your own soldier: run the shared sim locally for your own input and
-   correct it when snapshots arrive. Your own turning, walking and shooting would feel instant.
-2. Lower the smoothing buffer from 100 ms to ~60–70 ms once real-network jitter is measured
-   (p99 snapshot gap here was ~49 ms).
-3. Trim snapshots (round numbers, drop fields that rarely change) if bandwidth matters on
-   mobile data. 80 KB/s is fine on Wi-Fi.
+## Possible later improvements
+1. Lower the smoothing buffer for other players from 100 ms to ~60–70 ms once real-network
+   jitter is measured after deploying (p99 snapshot gap here was ~49 ms).
+2. Trim snapshots (round numbers, drop fields that rarely change) if bandwidth matters on
+   mobile data. 83 KB/s is fine on Wi-Fi.
+3. If shoving other players feels rubbery, predict their buttons better (currently assumed
+   unchanged since the last snapshot).

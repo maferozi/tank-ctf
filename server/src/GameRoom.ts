@@ -2,6 +2,8 @@ import { Room, matchMaker, type Client } from "colyseus";
 import {
   DEFAULT_HOLD_MS,
   DEFAULT_MAP,
+  InputQueue,
+  MAX_FRAMES_PER_MESSAGE,
   MAX_PLAYERS,
   MSG,
   SNAPSHOT_EVERY_TICKS,
@@ -22,6 +24,10 @@ import {
   type TankInput,
 } from "@tank/shared";
 
+// Clients send about 60 input messages a second (more on 120 Hz screens); anything far
+// beyond that is abuse.
+const MAX_MESSAGES_PER_SECOND = 240;
+
 const MAX_CATCH_UP_TICKS = 10; // after a stall, don't fast-forward more than this at once
 // TICK_STATS=1 logs how long ticks take (sim + snapshot), every STATS_EVERY_MS.
 const TICK_STATS = process.env.TICK_STATS === "1";
@@ -31,10 +37,11 @@ const STATS_EVERY_MS = 5000;
 // snapshots to all players. The server is the only one who decides what happens.
 export class GameRoom extends Room {
   maxClients = MAX_PLAYERS;
+  maxMessagesPerSecond = MAX_MESSAGES_PER_SECOND;
 
   private map = DEFAULT_MAP;
   private sim = createState(DEFAULT_MAP);
-  private buttons = new Map<string, TankInput>();
+  private queues = new Map<string, InputQueue>(); // per player: button samples, one per tick
   private players = new Map<string, Player>();
   private pendingEvents: GameEvent[] = [];
   private accMs = 0;
@@ -44,13 +51,9 @@ export class GameRoom extends Room {
     this.roomId = await this.freeRoomCode();
 
     this.onMessage(MSG.input, (client: Client, message: InputMessage) => {
-      const input = this.buttons.get(client.sessionId);
-      if (!input || typeof message !== "object" || message === null) return;
-      const held = message.held === true;
-      // Latch presses until the next tick, so a tap that starts and ends between two
-      // ticks still fires.
-      if (message.pressed === true || (held && !input.held)) input.pressed = true;
-      input.held = held;
+      const queue = this.queues.get(client.sessionId);
+      if (!queue || !Array.isArray(message)) return;
+      queue.push(message.slice(0, MAX_FRAMES_PER_MESSAGE));
     });
 
     this.onMessage(MSG.ready, (client: Client) => client.send(MSG.roster, this.roster()));
@@ -63,7 +66,7 @@ export class GameRoom extends Room {
     const team = isTeam(options.team) ? options.team : "red";
     const player: Player = { id: client.sessionId, name: cleanName(options.name), team };
     this.players.set(client.sessionId, player);
-    this.buttons.set(client.sessionId, { held: false, pressed: false });
+    this.queues.set(client.sessionId, new InputQueue());
     addTank(this.sim, this.map, client.sessionId, team);
     this.sendRoster();
     console.log(`${player.name} (${team}) joined ${this.roomId}, ${this.players.size} player(s)`);
@@ -72,7 +75,7 @@ export class GameRoom extends Room {
   onLeave(client: Client) {
     const player = this.players.get(client.sessionId);
     this.players.delete(client.sessionId);
-    this.buttons.delete(client.sessionId);
+    this.queues.delete(client.sessionId);
     removeTank(this.sim, client.sessionId);
     this.sendRoster();
     console.log(`${player?.name ?? client.sessionId} left ${this.roomId}, ${this.players.size} player(s)`);
@@ -108,13 +111,15 @@ export class GameRoom extends Room {
 
   private tick() {
     const start = TICK_STATS ? performance.now() : 0;
-    step(this.sim, this.map, Object.fromEntries(this.buttons), { holdMs: DEFAULT_HOLD_MS });
-    for (const input of this.buttons.values()) input.pressed = false;
+    const inputs: Record<string, TankInput> = {};
+    for (const [id, queue] of this.queues) inputs[id] = queue.next();
+    step(this.sim, this.map, inputs, { holdMs: DEFAULT_HOLD_MS });
     this.pendingEvents.push(...this.sim.events);
 
     if (this.sim.tick % SNAPSHOT_EVERY_TICKS === 0) {
       const { events: _lastStepEvents, ...state } = this.sim;
-      const snapshot: Snapshot = { state, events: this.pendingEvents };
+      const acks = Object.fromEntries([...this.queues].map(([id, queue]) => [id, queue.ack]));
+      const snapshot: Snapshot = { state, events: this.pendingEvents, acks };
       this.broadcast(MSG.snapshot, snapshot);
       this.pendingEvents = [];
     }

@@ -1,5 +1,6 @@
 import type { Team } from "./map";
-import type { GameEvent, GameState, TankInput } from "./sim";
+import type { InputFrame } from "./prediction";
+import type { GameEvent, GameState } from "./sim";
 
 // Messages between the web client and the game server.
 
@@ -9,7 +10,7 @@ export const SNAPSHOT_EVERY_TICKS = 2; // 60 Hz sim, 30 Hz snapshots
 export const MAX_NAME_LENGTH = 16;
 
 export const MSG = {
-  input: "input", // client -> server: TankInput, sent when the button changes
+  input: "input", // client -> server: InputMessage, every frame (one sample per sim tick)
   snapshot: "snap", // server -> clients: Snapshot
   roster: "roster", // server -> clients: Roster, on every join and leave
   // client -> server, once its listeners are set up: "send me the roster". The roster
@@ -22,11 +23,14 @@ export interface JoinOptions {
   team: Team;
 }
 
-export type InputMessage = TankInput;
+// Button samples, one per client sim tick, numbered so the server can ack them.
+export type InputMessage = InputFrame[];
+export const MAX_FRAMES_PER_MESSAGE = 32;
 
 export interface Snapshot {
   state: Omit<GameState, "events">;
   events: GameEvent[]; // everything that happened since the previous snapshot
+  acks: Record<string, number>; // per player: seq of the last input sample applied
 }
 
 export interface Player {
