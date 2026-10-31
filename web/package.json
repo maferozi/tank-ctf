@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@colyseus/sdk": "^0.18.9",
     "@tank/shared": "*",
     "next": "^16.4.3",
     "react": "^19.3.1",

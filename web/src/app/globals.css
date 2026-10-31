@@ -151,3 +151,129 @@ a {
   font-size: 11px;
   opacity: 0.85;
 }
+
+/* Menus: home page and the join form for invite links. */
+.menu {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(100%, 340px);
+  text-align: left;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.field input,
+.join-row input {
+  font: inherit;
+  font-size: 16px; /* 16px stops iOS zooming into the field */
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid #343a48;
+  background: var(--panel);
+  color: var(--text);
+  min-width: 0;
+}
+
+.team-pick {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.team-option {
+  font: inherit;
+  font-weight: 700;
+  padding: 12px;
+  border-radius: 10px;
+  border: 2px solid #343a48;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.team-option.red[aria-checked="true"] {
+  border-color: var(--red);
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, var(--panel));
+}
+
+.team-option.blue[aria-checked="true"] {
+  border-color: var(--blue);
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 12%, var(--panel));
+}
+
+.button {
+  border: none;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.button.secondary {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid #343a48;
+}
+
+.join-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.join-row input {
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+.error {
+  color: var(--red) !important;
+  font-size: 14px;
+}
+
+.quiet-link {
+  align-self: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* In-game: room code chip and the disconnected overlay. */
+.room-chip {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: none;
+  background: rgba(20, 22, 28, 0.75);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: rgba(10, 12, 16, 0.8);
+  cursor: default;
+}

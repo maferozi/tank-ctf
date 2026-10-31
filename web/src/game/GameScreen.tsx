@@ -1,28 +1,20 @@
 "use client";
 
-import {
-  DEFAULT_HOLD_MS,
-  DEFAULT_MAP,
-  TICK_MS,
-  addTank,
-  cloneState,
-  createState,
-  step,
-} from "@tank/shared";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import type { Driver } from "./driver";
 import { OneButton } from "./input";
 import { POWER_STYLE, pruneEffects, render, type Effect } from "./render";
 
-const LOCAL_ID = "you";
-const TARGETS = 3; // spinning blue tanks to practise on until online play exists
-const MAX_FRAME_MS = 250; // avoid a spiral of catch-up ticks after a tab switch
-
-// Phase 1: single-player prototype. The local tank plus spinning blue targets.
-export function Game() {
+// The full-screen game view: canvas, one-button input and (on touch devices) the TAP pad.
+// Desktop: the whole screen is the button. Touch: only the pad beside the map is.
+// `makeDriver` decides where the game comes from (solo sim or the server).
+export function GameScreen({ makeDriver, children }: { makeDriver: () => Driver; children?: ReactNode }) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const padRef = useRef<HTMLButtonElement>(null);
+  const makeDriverRef = useRef(makeDriver);
+  makeDriverRef.current = makeDriver;
   // Phones and tablets get a dedicated on-screen button; null until measured on the client.
   const [touch, setTouch] = useState<boolean | null>(null);
 
@@ -44,16 +36,10 @@ export function Game() {
     const padEl = touch ? padRef.current : null;
     if (touch && !padEl) return;
 
-    const map = DEFAULT_MAP;
-    const state = createState(map);
-    addTank(state, map, LOCAL_ID, "red");
-    for (let i = 0; i < TARGETS; i++) addTank(state, map, `target-${i}`, "blue");
-    // Dev-only hook so the sim can be inspected from the browser console.
-    if (process.env.NODE_ENV !== "production") (window as unknown as { __tank?: unknown }).__tank = state;
-
-    let prev = cloneState(state);
-    let effects: Effect[] = [];
+    const driver = makeDriverRef.current();
+    const { map } = driver;
     const button = new OneButton(padEl ?? surface);
+    let effects: Effect[] = [];
 
     // Fit the map into the stage, which is the screen minus the pad on touch devices.
     const resize = () => {
@@ -69,17 +55,13 @@ export function Game() {
     const observer = new ResizeObserver(resize);
     observer.observe(stage);
 
-    let acc = 0;
-    let last = performance.now();
     let raf = 0;
-    const frame = (now: number) => {
-      acc += Math.min(now - last, MAX_FRAME_MS);
-      last = now;
-      while (acc >= TICK_MS) {
-        prev = cloneState(state);
-        step(state, map, { [LOCAL_ID]: button.consume() }, { holdMs: DEFAULT_HOLD_MS });
-        for (const e of state.events) {
-          const team = state.tanks.find((t) => t.id === e.tankId)?.team ?? "red";
+    const loop = (now: number) => {
+      const frame = driver.frame(now, button);
+      if (padEl) padEl.dataset.pressed = String(button.held);
+      if (frame) {
+        for (const e of frame.events) {
+          const team = frame.curr.tanks.find((t) => t.id === e.tankId)?.team ?? "red";
           const base = { x: e.x, y: e.y, bornMs: now, team };
           if (e.type === "fire") effects.push({ ...base, kind: "flash" });
           if (e.type === "drop") effects.push({ ...base, kind: "puff" });
@@ -90,23 +72,21 @@ export function Game() {
             effects.push({ ...base, kind: "text", label: style.label, color: style.color });
           }
         }
-        acc -= TICK_MS;
+        effects = pruneEffects(effects, now);
+        render(ctx, { map, ...frame, localId: driver.localId, names: driver.names, effects, nowMs: now });
       }
-      if (padEl) padEl.dataset.pressed = String(button.held);
-      effects = pruneEffects(effects, now);
-      render(ctx, { map, prev, curr: state, alpha: acc / TICK_MS, localId: LOCAL_ID, effects, nowMs: now });
-      raf = requestAnimationFrame(frame);
+      raf = requestAnimationFrame(loop);
     };
-    raf = requestAnimationFrame(frame);
+    raf = requestAnimationFrame(loop);
 
     return () => {
       cancelAnimationFrame(raf);
       observer.disconnect();
       button.dispose();
+      driver.dispose();
     };
   }, [touch]);
 
-  // Desktop: the whole screen is the button. Touch: only the pad beside the map is.
   return (
     <div className={touch ? "game touch" : "game"} ref={surfaceRef}>
       <div className="stage" ref={stageRef}>
@@ -114,12 +94,13 @@ export function Game() {
       </div>
       {touch && (
         <div className="pad">
-          <button ref={padRef} type="button" className="fire-button" aria-label="Tap to shoot, hold to drive">
+          <button ref={padRef} type="button" className="fire-button" aria-label="Tap to shoot, hold to walk">
             <span className="fire-tap">TAP</span>
-            <span className="fire-hold">hold to drive</span>
+            <span className="fire-hold">hold to walk</span>
           </button>
         </div>
       )}
+      {children}
     </div>
   );
 }

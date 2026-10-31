@@ -1,5 +1,5 @@
-import { Game } from "@/game/Game";
+import { SoloGame } from "@/game/SoloGame";
 
 export default function PlayPage() {
-  return <Game />;
+  return <SoloGame />;
 }

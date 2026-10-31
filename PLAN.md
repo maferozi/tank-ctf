@@ -43,11 +43,22 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
   6-round magazine, kills and respawn, weight-based pushing, movable crates, power-up boxes
   (shield, speed, flare), top-down soldier art with fallen bodies, mobile TAP button.
   37 sim tests.
-- Phase 2 in progress: online play (room codes, many players on one map, server runs the sim).
+- Phase 2 done (online): create a room on `/`, share the 4-letter code or `/room/CODE` link,
+  up to 8 players on one map. The server runs the shared sim at 60 Hz, clients send only button
+  down/up and play back 30 Hz snapshots ~100 ms behind (no prediction yet). Players pick Red or
+  Blue when joining (temporary until the phase 3 lobby). Name tags over soldiers, yours in gold.
+  Two-bot smoke test: `npm run smoke -w server`.
+
+## Known gaps after phase 2
+- No client prediction: your own soldier reacts after ~100 ms plus ping. Tune after deploying.
+- Snapshots send the full state as JSON-like messages (~a few KB each). Fine for 8 players on
+  a LAN or one server region; trim fields if bandwidth becomes a problem.
+- A refresh or dropped connection loses your soldier (rejoin with the link). Reconnect is phase 3.
+- No Leave button in a match yet (browser back works). Comes with the phase 3 lobby.
 
 ## Build order
 1. Solo prototype. Done.
-2. Online: rooms by code, everyone on one map, server decides state.
+2. Online: rooms by code, everyone on one map, server decides state. Done.
 3. Lobby and teams: Red/Blue lists, host starts, teams lock, Leave button.
 4. Capture the flag: flags, bases, scoring, timer, win screen.
 5. Voice chat: LiveKit room per lobby, mute, speaking indicators.

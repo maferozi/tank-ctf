@@ -48,6 +48,7 @@ export interface RenderInput {
   curr: GameState;
   alpha: number; // 0..1 between prev and curr
   localId: string;
+  names?: ReadonlyMap<string, string>; // name tags over soldiers (online only)
   effects: Effect[];
   nowMs: number;
 }
@@ -80,7 +81,7 @@ export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
     if (!tank.alive) continue;
     const before = prevById.get(tank.id);
     const t = before?.alive ? lerpTank(before, tank, r.alpha) : tank;
-    drawSoldier(ctx, t, tank.id === r.localId, r.nowMs);
+    drawSoldier(ctx, t, tank.id === r.localId, r.nowMs, r.names?.get(tank.id));
   }
 
   const prevBullets = new Map(r.prev.bullets.map((b) => [b.id, b]));
@@ -227,7 +228,7 @@ function drawPowerBars(ctx: CanvasRenderingContext2D, t: Tank): void {
     ["speed", t.speedMs / SPEED_MS],
     ["flare", t.flareMs / FLARE_MS],
   ];
-  let y = -TANK_RADIUS - 14;
+  let y = -TANK_RADIUS - 17; // above the name tag
   for (const [kind, left] of bars) {
     if (left <= 0) continue;
     ctx.fillStyle = "rgba(255, 255, 255, 0.15)";
@@ -244,7 +245,7 @@ const GUN_EDGE = "#1d2028";
 
 // Top-down soldier facing +x, holding a rifle along the facing direction, so shots
 // leave the muzzle where the gun points. Collision size is still TANK_RADIUS.
-export function drawSoldier(ctx: CanvasRenderingContext2D, t: Tank, isLocal: boolean, nowMs: number): void {
+export function drawSoldier(ctx: CanvasRenderingContext2D, t: Tank, isLocal: boolean, nowMs: number, name?: string): void {
   const color = COLORS[t.team];
   ctx.save();
   ctx.translate(t.x, t.y);
@@ -253,6 +254,7 @@ export function drawSoldier(ctx: CanvasRenderingContext2D, t: Tank, isLocal: boo
     drawPowerBars(ctx, t);
     drawAmmo(ctx, t);
   }
+  if (name) drawNameTag(ctx, name, isLocal);
 
   ctx.rotate(t.angle);
   ctx.lineJoin = "round";
@@ -425,6 +427,19 @@ export function drawFallenSoldier(ctx: CanvasRenderingContext2D, t: Tank, nowMs:
   ctx.restore();
 
   ctx.restore();
+}
+
+// Small name above the soldier; yours in gold so you can find yourself.
+function drawNameTag(ctx: CanvasRenderingContext2D, name: string, isLocal: boolean): void {
+  ctx.font = "600 9px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "bottom";
+  const y = -TANK_RADIUS - 3;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.6)";
+  ctx.strokeText(name, 0, y);
+  ctx.fillStyle = isLocal ? "#ffd166" : "rgba(255, 255, 255, 0.85)";
+  ctx.fillText(name, 0, y);
 }
 
 const BULLET_LENGTH = 14;

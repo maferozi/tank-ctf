@@ -10,6 +10,11 @@ Read `PLAN.md` (decisions, phases, status) and `docs/GAMEPLAY.md` (rules and num
   prediction. Randomness goes through the seeded `state.rng`.
 - All tuning numbers live in `shared/src/constants.ts`.
 - `web/src/game/render.ts` draws everything with Canvas 2D; there is no game engine.
+- Online: `shared/src/net.ts` defines the messages. `server/src/GameRoom.ts` runs the sim and
+  broadcasts snapshots; `web/src/game/onlineDriver.ts` sends button changes and interpolates
+  snapshots; `web/src/net/session.ts` keeps the live room across page navigation.
+  `GameScreen` draws frames from either driver (`soloDriver` for `/play`).
+- After changing server or net code, run the server and `npm run smoke -w server`.
 - Some fields still say "tank" (`Tank`, `TANK_RADIUS`, `addTank`) from before the soldier art.
   The player is drawn as a soldier; the names were kept to avoid churn.
 - TypeScript 7 needs `"types": ["node"]` in tsconfigs that use Node APIs.

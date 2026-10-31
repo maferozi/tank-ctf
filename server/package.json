@@ -6,13 +6,15 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx src/smoke.ts"
   },
   "dependencies": {
     "@tank/shared": "*",
     "colyseus": "^0.18.10"
   },
   "devDependencies": {
+    "@colyseus/sdk": "^0.18.9",
     "@types/node": "^26.6.6",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
