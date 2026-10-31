@@ -1,0 +1,14 @@
+{
+  "name": "tank-ctf",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "web",
+    "server"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w web",
+    "dev:server": "npm run dev -w server",
+    "typecheck": "npm run typecheck -w shared && npm run typecheck -w web && npm run typecheck -w server"
+  }
+}
