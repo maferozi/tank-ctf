@@ -1,5 +1,6 @@
-import { BASE_RADIUS, FLAG_RADIUS, FLAG_RETURN_MS, ROUND_RESTART_MS, TANK_RADIUS, TICK_MS } from "./constants";
+import { BASE_RADIUS, FLAG_RADIUS, FLAG_RETURN_MS, TANK_RADIUS, TICK_MS } from "./constants";
 import type { GameMap, Team } from "./map";
+import { winRound } from "./match";
 import type { GameState, Tank } from "./sim";
 
 // Capture the flag. Each team's flag stands at its base (its home). An enemy who touches
@@ -67,8 +68,7 @@ export function tickFlags(state: GameState): void {
       flag.y = carrier.y;
       const base = state.flags.find((f) => f.team === carrier.team);
       if (base && (carrier.x - base.homeX) ** 2 + (carrier.y - base.homeY) ** 2 <= BASE_RADIUS * BASE_RADIUS) {
-        state.winner = carrier.team;
-        state.overMs = ROUND_RESTART_MS;
+        winRound(state, carrier.team);
         state.events.push({ type: "capture", team: carrier.team, tankId: carrier.id, x: carrier.x, y: carrier.y });
         return;
       }

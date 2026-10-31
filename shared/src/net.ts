@@ -1,4 +1,5 @@
 import type { Team } from "./map";
+import type { MatchRounds } from "./match";
 import type { InputFrame } from "./prediction";
 import type { GameEvent, GameState } from "./sim";
 
@@ -21,6 +22,11 @@ export const MSG = {
 export interface JoinOptions {
   name: string;
   team: Team;
+}
+
+// The room creator also picks the match type: 1 round = single match, 5 or 7 = tournament.
+export interface CreateOptions extends JoinOptions {
+  rounds: MatchRounds;
 }
 
 // Button samples, one per client sim tick, numbered so the server can ack them.
@@ -49,6 +55,12 @@ export interface RoomInfo {
   code: string;
   players: Player[];
   maxPlayers: number;
+  rounds: MatchRounds;
+}
+
+// What a room publishes in its listing metadata (read by GET /rooms/CODE).
+export interface RoomMetadata extends Roster {
+  rounds: MatchRounds;
 }
 
 // Room codes: 4 letters, no look-alikes (I/L/O/0/1), easy to read out loud.

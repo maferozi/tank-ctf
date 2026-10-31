@@ -32,6 +32,7 @@ import {
 } from "./constants";
 import { createFlags, dropFlagOf, isCarrying, tickFlags, type Flag } from "./flags";
 import { circleHitsWall, type GameMap, type Team } from "./map";
+import { advanceMatch, createMatch, type Match, type MatchRounds } from "./match";
 import { contact, resolveContacts, shove, type Body } from "./physics";
 
 export interface Tank {
@@ -117,6 +118,7 @@ export interface GameState {
   flags: Flag[];
   winner: Team | null; // set when a flag is captured; the round is over
   overMs: number; // while over: time until the next round starts
+  match: Match; // single match or tournament: round number, points, champion
   rng: number; // seed for power-up rolls, so server and clients roll the same
   nextBulletId: number;
   events: GameEvent[]; // events produced by the last step only
@@ -134,8 +136,9 @@ export interface SimConfig {
 }
 
 // Pass the map to place its crates, power boxes and flags; without one the arena starts
-// empty (handy in tests).
-export function createState(map?: GameMap): GameState {
+// empty (handy in tests). `rounds` picks the match type: 1 = single match, 5 or 7 = a
+// tournament.
+export function createState(map?: GameMap, rounds: MatchRounds = 1): GameState {
   return {
     tick: 0,
     tanks: [],
@@ -143,6 +146,7 @@ export function createState(map?: GameMap): GameState {
     ...mapObjects(map),
     winner: null,
     overMs: 0,
+    match: createMatch(rounds),
     rng: 0x2f6b1d3,
     nextBulletId: 1,
     events: [],
@@ -175,6 +179,7 @@ export function cloneState(s: GameState): GameState {
     flags: s.flags.map((f) => ({ ...f })),
     winner: s.winner,
     overMs: s.overMs,
+    match: { ...s.match, scores: { ...s.match.scores } },
     rng: s.rng,
     nextBulletId: s.nextBulletId,
     events: [...s.events],
@@ -245,7 +250,10 @@ export function step(
   // Round over: everything holds still under the win banner, then a fresh round.
   if (state.winner) {
     state.overMs -= TICK_MS;
-    if (state.overMs <= 1e-6) resetRound(state, map);
+    if (state.overMs <= 1e-6) {
+      advanceMatch(state);
+      resetRound(state, map);
+    }
     return;
   }
 

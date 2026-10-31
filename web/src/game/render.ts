@@ -18,6 +18,7 @@ import {
   type Flag,
   type GameMap,
   type GameState,
+  type Match,
   type PowerBox,
   type PowerKind,
   type Tank,
@@ -118,7 +119,29 @@ export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
   }
 
   drawEffects(ctx, r.effects, r.nowMs);
-  if (r.curr.winner) drawWinBanner(ctx, map, r.curr.winner, r.curr.overMs);
+  if (r.curr.match.rounds > 1) drawScoreboard(ctx, map, r.curr.match);
+  if (r.curr.winner) drawWinBanner(ctx, map, r.curr.winner, r.curr.overMs, r.curr.match);
+}
+
+// Tournaments only: round and points, drawn on the top wall, outside the play area.
+function drawScoreboard(ctx: CanvasRenderingContext2D, map: GameMap, match: Match): void {
+  const y = TILE / 2;
+  const cx = map.width / 2;
+  ctx.textBaseline = "middle";
+  ctx.font = "700 15px system-ui, sans-serif";
+  ctx.textAlign = "right";
+  ctx.fillStyle = COLORS.red.body;
+  ctx.fillText(`RED ${match.scores.red}`, cx - 14, y);
+  ctx.textAlign = "center";
+  ctx.fillStyle = "rgba(255, 255, 255, 0.55)";
+  ctx.fillText(":", cx, y);
+  ctx.textAlign = "left";
+  ctx.fillStyle = COLORS.blue.body;
+  ctx.fillText(`${match.scores.blue} BLUE`, cx + 14, y);
+  ctx.textAlign = "right";
+  ctx.font = "600 12px system-ui, sans-serif";
+  ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+  ctx.fillText(`ROUND ${Math.min(match.round, match.rounds)}/${match.rounds}`, cx - 110, y);
 }
 
 // Base: a ring in the team colour around the flag stand. Carry the enemy flag in here.
@@ -192,21 +215,37 @@ function drawFlagShape(ctx: CanvasRenderingContext2D, team: Team, x: number, y: 
   ctx.restore();
 }
 
-function drawWinBanner(ctx: CanvasRenderingContext2D, map: GameMap, winner: Team, overMs: number): void {
-  const color = COLORS[winner];
+// Single match: "RED WINS". Tournament: "RED WINS ROUND 2" with the points, and after the
+// last round "RED WINS THE TOURNAMENT" with the final score.
+function drawWinBanner(ctx: CanvasRenderingContext2D, map: GameMap, winner: Team, overMs: number, match: Match): void {
+  const tournament = match.rounds > 1;
+  const finished = match.round >= match.rounds;
+  const champion = finished ? match.champion : null;
+  const headlineTeam = finished && tournament ? champion ?? winner : winner;
+  const color = COLORS[headlineTeam];
+  const name = headlineTeam.toUpperCase();
+  const headline = !tournament ? `${name} WINS` : finished ? `${name} WINS THE TOURNAMENT` : `${winner.toUpperCase()} WINS ROUND ${match.round}`;
+  const seconds = Math.max(1, Math.ceil(overMs / 1000));
+  const score = `Red ${match.scores.red} : ${match.scores.blue} Blue`;
+  const subline = !tournament
+    ? `New match in ${seconds}`
+    : finished
+      ? `Final score ${score} · New tournament in ${seconds}`
+      : `${score} · Round ${match.round + 1} in ${seconds}`;
   ctx.fillStyle = "rgba(10, 12, 16, 0.55)";
   ctx.fillRect(0, 0, map.width, map.height);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.font = "800 72px system-ui, sans-serif";
+  // Long tournament headlines get a smaller font so they fit the map width.
+  ctx.font = `800 ${headline.length > 16 ? 52 : 72}px system-ui, sans-serif`;
   ctx.lineWidth = 8;
   ctx.strokeStyle = color.dark;
-  ctx.strokeText(`${winner.toUpperCase()} WINS`, map.width / 2, map.height / 2 - 20);
+  ctx.strokeText(headline, map.width / 2, map.height / 2 - 20);
   ctx.fillStyle = color.body;
-  ctx.fillText(`${winner.toUpperCase()} WINS`, map.width / 2, map.height / 2 - 20);
+  ctx.fillText(headline, map.width / 2, map.height / 2 - 20);
   ctx.font = "600 22px system-ui, sans-serif";
   ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
-  ctx.fillText(`Next round in ${Math.max(1, Math.ceil(overMs / 1000))}`, map.width / 2, map.height / 2 + 40);
+  ctx.fillText(subline, map.width / 2, map.height / 2 + 40);
 }
 
 function drawSpawnZones(ctx: CanvasRenderingContext2D, map: GameMap): void {

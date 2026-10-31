@@ -1,5 +1,5 @@
 import { Client, type Room } from "@colyseus/sdk";
-import { MSG, ROOM_NAME, type JoinOptions, type Player, type RoomInfo, type Roster } from "@tank/shared";
+import { MSG, ROOM_NAME, type CreateOptions, type JoinOptions, type Player, type RoomInfo, type Roster } from "@tank/shared";
 
 // The one live connection to a game room. Kept outside React so it survives the
 // navigation from the home page to /room/CODE.
@@ -65,7 +65,7 @@ function track(room: Room): Session {
   return session;
 }
 
-export async function createRoom(options: JoinOptions): Promise<Session> {
+export async function createRoom(options: CreateOptions): Promise<Session> {
   return track(await new Client(serverUrl()).create(ROOM_NAME, options));
 }
 

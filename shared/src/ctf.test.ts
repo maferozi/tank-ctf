@@ -6,7 +6,6 @@ import {
   CARRIER_SPEED,
   DRIVE_SPEED,
   FLAG_RETURN_MS,
-  ROUND_RESTART_MS,
   TICK_MS,
 } from "./constants";
 import { DEFAULT_MAP } from "./map";
@@ -98,7 +97,7 @@ test("carrying the enemy flag into your own base wins, then a new round starts",
   assert.equal(blue.x, bx);
   assert.equal(state.winner, "red");
 
-  const after = run(state, ticks(ROUND_RESTART_MS));
+  const after = run(state, ticks(state.overMs) + 1);
   assert.equal(state.winner, null);
   assert.ok(after.some((e) => e.type === "round"));
   assert.ok(blueFlag.atHome === false || flagOf(state, "blue").atHome, "flags are reset");

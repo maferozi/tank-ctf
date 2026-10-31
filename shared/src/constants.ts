@@ -55,6 +55,8 @@ export const BASE_RADIUS = 34; // a carrier this close to their own flag stand s
 export const CARRIER_SPEED = 0.8; // walking speed multiplier while carrying a flag
 export const FLAG_RETURN_MS = 15000; // a dropped flag left alone goes home after this
 export const ROUND_RESTART_MS = 6000; // win banner, then a fresh round
+export const MATCH_RESTART_MS = 10000; // after the last round: final banner, then a new match
+export const ROUND_POINTS = 2; // a tournament team gets this for each round it wins
 
 // Power-up boxes: touch one to get a random power. A tank holds one power at a time.
 export const POWER_BOX_SIZE = 26; // px, square

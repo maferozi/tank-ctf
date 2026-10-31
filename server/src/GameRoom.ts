@@ -11,14 +11,17 @@ import {
   addTank,
   cleanName,
   createState,
+  isMatchRounds,
   isTeam,
   makeRoomCode,
   removeTank,
   step,
   type GameEvent,
+  type CreateOptions,
   type InputMessage,
   type JoinOptions,
   type Player,
+  type RoomMetadata,
   type Roster,
   type Snapshot,
   type TankInput,
@@ -47,8 +50,9 @@ export class GameRoom extends Room {
   private accMs = 0;
   private stats = { ticks: 0, totalMs: 0, maxMs: 0, catchUps: 0, since: performance.now() };
 
-  async onCreate() {
+  async onCreate(options: Partial<CreateOptions> = {}) {
     this.roomId = await this.freeRoomCode();
+    this.sim = createState(this.map, isMatchRounds(options.rounds) ? options.rounds : 1);
 
     this.onMessage(MSG.input, (client: Client, message: InputMessage) => {
       const queue = this.queues.get(client.sessionId);
@@ -140,7 +144,8 @@ export class GameRoom extends Room {
   private sendRoster() {
     const roster = this.roster();
     this.broadcast(MSG.roster, roster);
-    void this.setMetadata(roster);
+    const metadata: RoomMetadata = { ...roster, rounds: this.sim.match.rounds };
+    void this.setMetadata(metadata);
   }
 
   // A 4-letter code nobody else is using right now.

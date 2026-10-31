@@ -46,6 +46,21 @@ Input bounce guard: shots closer than `FIRE_COOLDOWN_MS` (100 ms) don't fire.
 - Your own flag at home can't be picked up by your team. Scoring doesn't require your own flag
   to be home.
 
+## Match types
+Picked by whoever creates the room (home page → Match). The join page shows it.
+
+| Type | Rounds | How it's won |
+|---|---|---|
+| Single match | 1 | The first capture wins. "RED WINS", then a new match after `MATCH_RESTART_MS` (10 s). |
+| Tournament | 5 or 7 | Each round won is worth `ROUND_POINTS` (2). All rounds are played, even if one team can no longer be caught. After the last round, most points wins: "RED WINS THE TOURNAMENT". |
+
+- Between tournament rounds: "RED WINS ROUND 2" with the score, then the next round after
+  `ROUND_RESTART_MS` (6 s). After the last round the final banner shows for 10 s and a new
+  tournament of the same length starts.
+- A small scoreboard on the top wall shows the round and points (tournaments only).
+- Every round ends in a capture and the round counts are odd, so a tournament always has
+  exactly one champion.
+
 ## Pushing and weight
 Soldiers, crates and power boxes never overlap. Two bodies pushing each other move together at a
 speed set by their weights:

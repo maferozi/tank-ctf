@@ -156,6 +156,7 @@ export function createOnlineDriver(session: Session): Driver {
         // Only the server decides who won, so a mispredicted capture never shows a banner.
         winner: others.winner,
         overMs: others.overMs,
+        match: others.match,
       };
 
       const allEvents = [...events, ...serverEvents];

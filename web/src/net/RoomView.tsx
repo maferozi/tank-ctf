@@ -105,6 +105,7 @@ function JoinForm({ code, onJoined }: { code: string; onJoined: (s: Session) => 
   return (
     <main className="home">
       <h1>Room {code}</h1>
+      {info && <p>{info.rounds > 1 ? `Tournament · ${info.rounds} rounds` : "Single match"}</p>}
       <form className="menu" onSubmit={submit}>
         <PlayerFields setup={setup} players={info?.players ?? []} />
         <button type="submit" className="button" disabled={busy || full}>

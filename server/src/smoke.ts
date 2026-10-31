@@ -16,7 +16,7 @@ async function play(button: BotButton, ms: number) {
   }
 }
 
-const ann = await new Client(url).create(ROOM_NAME, { name: "Ann", team: "red" });
+const ann = await new Client(url).create(ROOM_NAME, { name: "Ann", team: "red", rounds: 5 });
 assert.match(ann.roomId, /^[A-Z]{4}$/, "room id should be a 4-letter code");
 const annRosters: Roster[] = [];
 ann.onMessage(MSG.roster, (r: Roster) => annRosters.push(r));
@@ -42,6 +42,8 @@ assert.equal(infoRes.status, 200);
 assert.equal(infoRes.headers.get("access-control-allow-origin"), "*", "browsers on another port must be allowed to read it");
 const info = (await infoRes.json()) as RoomInfo;
 assert.deepEqual(info.players.map((p) => `${p.name}:${p.team}`).sort(), ["Ann:red", "Bob:blue"]);
+assert.equal(info.rounds, 5, "room info shows the match type the creator picked");
+assert.equal(snaps.at(-1)!.state.match.rounds, 5, "the game runs a 5-round tournament");
 const missing = await fetch(`${http}/rooms/ZZZZ`);
 assert.equal(missing.status, 404);
 

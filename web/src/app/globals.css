@@ -307,3 +307,33 @@ a {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Two-or-more option toggle (match type, rounds). */
+.segmented {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 6px;
+}
+
+.segmented button {
+  font: inherit;
+  font-weight: 600;
+  padding: 10px;
+  border-radius: 10px;
+  border: 2px solid #343a48;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.segmented button[aria-checked="true"] {
+  border-color: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+}

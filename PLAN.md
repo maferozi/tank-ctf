@@ -54,7 +54,9 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
 - Phase 4 core done (capture the flag): flags at each base, pick up / carry / drop / return /
   auto-return, carrier at 0.8× speed, capture wins the round with a banner and a fresh round
   after 6 s. Bodies now slide with momentum when shot while walking. See `docs/GAMEPLAY.md`.
-  Still open: score to N captures and a round timer, if wanted.
+  Match types: single match (one capture wins) or a tournament of 5 or 7 rounds, 2 points per
+  round won, all rounds played, most points wins. Picked when creating a room.
+  Still open: a round timer, if wanted.
 
 ## Known gaps after phase 2
 - 8-player load test passed (see `docs/NETCODE.md`): steady 60 Hz server, 30 Hz snapshots, no
