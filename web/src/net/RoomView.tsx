@@ -138,13 +138,7 @@ function RoomChip({ code, players }: { code: string; players: number }) {
   }
 
   return (
-    <button
-      type="button"
-      className="room-chip"
-      // Keep presses on the chip from also counting as the game button.
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={share}
-    >
+    <button type="button" className="room-chip" onClick={share}>
       {copied ? "Link copied" : `${code} · ${players} ${players === 1 ? "player" : "players"}`}
     </button>
   );

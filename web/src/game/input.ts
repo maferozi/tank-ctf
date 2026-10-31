@@ -9,6 +9,10 @@ export class OneButton {
 
   constructor(target: HTMLElement) {
     const onPointerDown = (e: PointerEvent) => {
+      // Links and buttons drawn on top of the game (room chip, "Back to start") keep their
+      // clicks; capturing the pointer here would swallow them.
+      const control = e.target instanceof Element ? e.target.closest(CONTROLS) : null;
+      if (control && control !== target) return;
       e.preventDefault();
       this.press(() => this.pointers.add(e.pointerId));
       try {
@@ -76,6 +80,8 @@ export class OneButton {
     if (!wasHeld) this.pressedSinceTick = true;
   }
 }
+
+const CONTROLS = "a, button, input, select, textarea, label";
 
 function isButtonKey(e: KeyboardEvent): boolean {
   return e.code === "Space" || e.code === "Enter";
