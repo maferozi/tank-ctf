@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Driver } from "./driver";
 import { OneButton } from "./input";
 import { POWER_STYLE, pruneEffects, render, type Effect } from "./render";
+import { isMuted, playEvents, setMuted, unlockAudio } from "./sound";
 
 // The full-screen game view: canvas, one-button input and (on touch devices) the TAP pad.
 // Desktop: the whole screen is the button. Touch: only the pad beside the map is.
@@ -40,6 +41,9 @@ export function GameScreen({ makeDriver, children }: { makeDriver: () => Driver;
     const { map } = driver;
     const button = new OneButton(padEl ?? surface);
     let effects: Effect[] = [];
+    // Browsers only allow sound after a user gesture: the first press starts the audio.
+    window.addEventListener("pointerdown", unlockAudio, true);
+    window.addEventListener("keydown", unlockAudio, true);
 
     // Fit the map inside the stage's padding (room for the outline); the stage is the
     // screen minus the pad on touch devices.
@@ -83,6 +87,13 @@ export function GameScreen({ makeDriver, children }: { makeDriver: () => Driver;
           }
           if (e.type === "round") effects = [];
         }
+        const me = frame.curr.tanks.find((t) => t.id === driver.localId);
+        playEvents(frame.events, {
+          localId: driver.localId,
+          myTeam: me?.team ?? null,
+          me: me ? { x: me.x, y: me.y } : null,
+          mapWidth: map.width,
+        });
         effects = pruneEffects(effects, now);
         render(ctx, { ...frame, localId: driver.localId, names: driver.names, effects, nowMs: now });
       }
@@ -91,6 +102,8 @@ export function GameScreen({ makeDriver, children }: { makeDriver: () => Driver;
 
     return () => {
       cancelAnimationFrame(raf);
+      window.removeEventListener("pointerdown", unlockAudio, true);
+      window.removeEventListener("keydown", unlockAudio, true);
       observer.disconnect();
       button.dispose();
       driver.dispose();
@@ -111,6 +124,26 @@ export function GameScreen({ makeDriver, children }: { makeDriver: () => Driver;
         </div>
       )}
       {children}
+      <SoundToggle />
     </div>
+  );
+}
+
+// Top-right: turn sound effects on or off (remembered on this device).
+function SoundToggle() {
+  const [muted, setMutedState] = useState(false);
+  useEffect(() => setMutedState(isMuted()), []);
+  return (
+    <button
+      type="button"
+      className="room-chip sound-chip"
+      aria-pressed={!muted}
+      onClick={() => {
+        setMuted(!muted);
+        setMutedState(!muted);
+      }}
+    >
+      {muted ? "Sound off" : "Sound on"}
+    </button>
   );
 }

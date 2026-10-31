@@ -99,6 +99,24 @@ on the pusher.
 Random rolls use a seeded generator stored in the game state, so the server and every client
 roll the same.
 
+## Sounds
+Synthesized in the browser (`web/src/game/sound.ts`, no audio files). Audio starts on the first
+press; the "Sound on / off" button top-right mutes it and is remembered on the device.
+
+| Event | Sound |
+|---|---|
+| Shot | Short crack. Other players' shots are quieter the farther away they are; everything pans left/right with where it happens. |
+| Flare burst | Rising whoosh instead of four shots. |
+| Your bullet drops | Soft tick. |
+| Someone is shot | Thud and falling groan; a bright two-note confirm if you shot them. |
+| You are shot | Low dull hit. |
+| Shield blocks a bullet | Metallic ping. |
+| Power picked up | Rising notes, different for shield, speed and flare. |
+| Flag taken | Rising two notes when your team takes theirs; a three-note alarm when they take yours. |
+| Flag dropped / returned | Falling two notes / bright chime. |
+| Round won / lost | Fanfare / falling minor phrase. |
+| New round | Beep, beep, higher beep. |
+
 ## Maps
 All maps are 28×18 tiles (40 px each), defined as text in `shared/src/maps.ts` (Arena is in
 `map.ts`). Legend: `#` wall, `.` floor, `1`/`2` red/blue respawn square (a 2 × 2 block),
