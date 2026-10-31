@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CRATE_SIZE, POWER_BOX_SIZE, TANK_RADIUS, TILE } from "./constants";
+import { BED_SIZE, CRATE_SIZE, POWER_BOX_SIZE, TANK_RADIUS, TILE } from "./constants";
 import { boxHitsSolid, circleHitsSolid, isBlockedAt, type GameMap } from "./map";
 import { MAPS } from "./maps";
 
@@ -39,6 +39,26 @@ for (const map of MAPS) {
     for (const s of [...map.spawns.red, ...map.spawns.blue]) assert.equal(circleHitsSolid(map, s.x, s.y, TANK_RADIUS), false);
     for (const c of map.crates) assert.equal(boxHitsSolid(map, c.x, c.y, CRATE_SIZE / 2), false);
     for (const p of map.powerBoxes) assert.equal(boxHitsSolid(map, p.x, p.y, POWER_BOX_SIZE / 2), false);
+    for (const b of map.beds) assert.equal(boxHitsSolid(map, b.x, b.y, BED_SIZE / 2), false);
+  });
+
+  test(`${map.name}: crates, beds, power boxes, spawns and flags start apart`, () => {
+    const boxes = [
+      ...map.crates.map((p) => ({ ...p, h: CRATE_SIZE / 2 })),
+      ...map.beds.map((p) => ({ ...p, h: BED_SIZE / 2 })),
+      ...map.powerBoxes.map((p) => ({ ...p, h: POWER_BOX_SIZE / 2 })),
+    ];
+    const points = [...map.spawns.red, ...map.spawns.blue, map.flags.red!, map.flags.blue!];
+    boxes.forEach((a, i) => {
+      for (const b of boxes.slice(i + 1)) {
+        const apart = Math.abs(a.x - b.x) >= a.h + b.h || Math.abs(a.y - b.y) >= a.h + b.h;
+        assert.ok(apart, `boxes overlap at (${a.x}, ${a.y}) and (${b.x}, ${b.y})`);
+      }
+      for (const p of points) {
+        const apart = Math.abs(a.x - p.x) >= a.h + TANK_RADIUS || Math.abs(a.y - p.y) >= a.h + TANK_RADIUS;
+        assert.ok(apart, `box at (${a.x}, ${a.y}) covers a spawn or flag at (${p.x}, ${p.y})`);
+      }
+    });
   });
 
   test(`${map.name}: every spawn can reach both flags, both scoring spots and every power box`, () => {

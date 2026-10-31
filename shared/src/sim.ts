@@ -1,4 +1,6 @@
 import {
+  BED_MASS,
+  BED_SIZE,
   BODY_FRICTION,
   BULLET_RANGE,
   BULLET_RADIUS,
@@ -77,11 +79,13 @@ export interface Bullet {
 }
 
 // A movable obstacle. Heavy, blocks bullets, and "sticks" before it starts sliding.
+// A bed is a bigger, heavier one (BED_SIZE, BED_MASS).
 export interface Crate {
   id: number;
   x: number;
   y: number;
   pushMs: number; // how long it has been pushed recently; loosens it up
+  bed?: boolean;
 }
 
 export type PowerKind = "shield" | "speed" | "flare";
@@ -165,7 +169,10 @@ export function createMatchState(rounds: MatchRounds, maps?: readonly unknown[])
 
 function mapObjects(map?: GameMap): Pick<GameState, "crates" | "powerBoxes" | "flags"> {
   return {
-    crates: (map?.crates ?? []).map((c, i) => ({ id: i + 1, x: c.x, y: c.y, pushMs: 0 })),
+    crates: [
+      ...(map?.crates ?? []).map((c) => ({ x: c.x, y: c.y, pushMs: 0 })),
+      ...(map?.beds ?? []).map((b) => ({ x: b.x, y: b.y, pushMs: 0, bed: true })),
+    ].map((c, i) => ({ id: i + 1, ...c })),
     powerBoxes: (map?.powerBoxes ?? []).map((p, i) => ({
       id: i + 1,
       x: p.x,
@@ -493,13 +500,13 @@ function tankBody(t: Tank): Body {
 }
 
 function crateBody(c: Crate): Body {
-  return heavyBoxBody(c, CRATE_SIZE);
+  return c.bed ? heavyBoxBody(c, BED_SIZE, BED_MASS) : heavyBoxBody(c, CRATE_SIZE);
 }
 
-// Crates and power boxes: heavy, and stuck at first until pushed for CRATE_BREAKAWAY_MS.
-function heavyBoxBody(box: Crate | PowerBox, size: number): Body {
+// Crates, beds and power boxes: heavy, and stuck at first until pushed for CRATE_BREAKAWAY_MS.
+function heavyBoxBody(box: Crate | PowerBox, size: number, mass = CRATE_MASS): Body {
   const stuck = 1 - Math.min(1, box.pushMs / CRATE_BREAKAWAY_MS);
-  return { pos: box, shape: "box", size: size / 2, mass: CRATE_MASS * (1 + (CRATE_STATIC - 1) * stuck) };
+  return { pos: box, shape: "box", size: size / 2, mass: mass * (1 + (CRATE_STATIC - 1) * stuck) };
 }
 
 // Tanks, crates and power boxes on the map never overlap; pushing is decided by weight

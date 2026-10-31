@@ -11,9 +11,9 @@ export interface Spawn {
 // How a map is drawn (floor and wall art). Gameplay is the same for every theme.
 export type MapTheme = "arena" | "wood" | "grass" | "tiles";
 
-// What each tile is, for drawing: wall, desk (a wall drawn as a table), water, wood floor
-// (e.g. inside a house on a grass map) or plain floor.
-export type TileKind = "wall" | "desk" | "water" | "wood" | "floor";
+// What each tile is, for drawing: wall, water, wood floor (e.g. inside a house on a grass
+// map) or plain floor.
+export type TileKind = "wall" | "water" | "wood" | "floor";
 
 export interface GameMap {
   id: string;
@@ -24,10 +24,11 @@ export interface GameMap {
   width: number;
   height: number;
   tiles: TileKind[]; // row-major, cols * rows
-  walls: boolean[]; // blocks walking and bullets (walls and desks)
+  walls: boolean[]; // blocks walking and bullets
   water: boolean[]; // blocks walking only: bullets fly over it
   spawns: Record<Team, Spawn[]>;
   crates: { x: number; y: number }[]; // starting centres of movable crates
+  beds: { x: number; y: number }[]; // starting centres of beds (big movable blocks)
   powerBoxes: { x: number; y: number }[]; // power-up box spots
   flags: Partial<Record<Team, { x: number; y: number }>>; // flag stands
   // Where a team scores by bringing the enemy flag. Maps without pads score at the team's
@@ -36,8 +37,8 @@ export interface GameMap {
 }
 
 // '#' wall, '.' floor, 'R' red spawn, 'B' blue spawn, 'X' movable crate, 'P' power-up box,
-// 'r' / 'b' red / blue flag stand, '1' / '2' red / blue scoring pad, 'T' desk (a wall),
-// '~' water (blocks walking, not bullets), ',' wood floor.
+// 'r' / 'b' red / blue flag stand, '1' / '2' red / blue scoring pad, 'T' bed (each 2 x 2
+// block of T is one bed), '~' water (blocks walking, not bullets), ',' wood floor.
 const ARENA = [
   "############################",
   "#.............P............#",
@@ -67,15 +68,16 @@ export function parseMap(rows: readonly string[], id = "custom", name = "Custom"
   const bases: GameMap["bases"] = {};
   const spawns: Record<Team, Spawn[]> = { red: [], blue: [] };
   const crates: { x: number; y: number }[] = [];
+  const beds: { x: number; y: number }[] = [];
   const powerBoxes: { x: number; y: number }[] = [];
   const flags: GameMap["flags"] = {};
   rows.forEach((row, r) => {
     if (row.length !== cols) throw new Error(`map row ${r} has length ${row.length}, expected ${cols}`);
     for (let c = 0; c < cols; c++) {
       const ch = row[c];
-      const kind: TileKind = ch === "#" ? "wall" : ch === "T" ? "desk" : ch === "~" ? "water" : ch === "," ? "wood" : "floor";
+      const kind: TileKind = ch === "#" ? "wall" : ch === "~" ? "water" : ch === "," ? "wood" : "floor";
       tiles.push(kind);
-      walls.push(kind === "wall" || kind === "desk");
+      walls.push(kind === "wall");
       water.push(kind === "water");
       const x = (c + 0.5) * TILE;
       const y = (r + 0.5) * TILE;
@@ -90,9 +92,27 @@ export function parseMap(rows: readonly string[], id = "custom", name = "Custom"
       if (ch === "2") bases.blue = { x, y };
     }
   });
+  // Beds: pair up T tiles into 2 x 2 blocks, left to right and top to bottom.
+  const claimed = new Set<string>();
+  rows.forEach((row, r) => {
+    for (let c = 0; c < cols; c++) {
+      if (row[c] !== "T" || claimed.has(`${c},${r}`)) continue;
+      const block = [
+        [c, r],
+        [c + 1, r],
+        [c, r + 1],
+        [c + 1, r + 1],
+      ] as const;
+      if (!block.every(([bc, br]) => rows[br]?.[bc] === "T" && !claimed.has(`${bc},${br}`))) {
+        throw new Error(`map ${id}: bed at row ${r}, col ${c} is not a 2 x 2 block of T`);
+      }
+      for (const [bc, br] of block) claimed.add(`${bc},${br}`);
+      beds.push({ x: (c + 1) * TILE, y: (r + 1) * TILE });
+    }
+  });
   // Tiles holding an object (spawn, crate, flag, pad...) have no floor of their own: give
   // them the floor most of their neighbours have, so a crate in a wooden room sits on wood.
-  const objects = new Set(["R", "B", "X", "P", "r", "b", "1", "2"]);
+  const objects = new Set(["R", "B", "X", "P", "r", "b", "1", "2", "T"]);
   rows.forEach((row, r) => {
     for (let c = 0; c < cols; c++) {
       if (!objects.has(row[c]!)) continue;
@@ -116,6 +136,7 @@ export function parseMap(rows: readonly string[], id = "custom", name = "Custom"
     water,
     spawns,
     crates,
+    beds,
     powerBoxes,
     flags,
     bases,
@@ -124,7 +145,7 @@ export function parseMap(rows: readonly string[], id = "custom", name = "Custom"
 
 export const DEFAULT_MAP = parseMap(ARENA, "arena", "Arena");
 
-// Stops bullets (and walking): walls, desks, and everything outside the map.
+// Stops bullets (and walking): walls and everything outside the map.
 export function isWallAt(map: GameMap, col: number, row: number): boolean {
   if (col < 0 || row < 0 || col >= map.cols || row >= map.rows) return true;
   return map.walls[row * map.cols + col] ?? true;

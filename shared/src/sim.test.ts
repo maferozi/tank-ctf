@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  BED_MASS,
+  BED_SIZE,
   BODY_MASS,
   BULLET_RANGE,
   BULLET_SPEED,
@@ -21,7 +23,8 @@ import {
   TANK_RADIUS,
   TICK_MS,
 } from "./constants";
-import { boxHitsWall, DEFAULT_MAP } from "./map";
+import { boxHitsWall, DEFAULT_MAP, parseMap } from "./map";
+import { getMap } from "./maps";
 import { contact } from "./physics";
 import { addTank, createState, givePower, step, type TankInput } from "./sim";
 
@@ -314,6 +317,57 @@ test("a crate is slow to get going, then slides at a steady heavy pace", () => {
     { pos: crate, shape: "box", size: CRATE_SIZE / 2, mass: 1 },
   );
   assert.ok((overlap?.depth ?? 0) < 1e-6, "tank overlaps the crate");
+});
+
+// An empty walled room, so a big bed has space to slide.
+const OPEN_ROOM = parseMap([
+  "#".repeat(28),
+  `#R${".".repeat(24)}B#`,
+  ...Array.from({ length: 15 }, () => `#${".".repeat(26)}#`),
+  "#".repeat(28),
+]);
+
+// Pushes a box of the given kind for 1.5 s from rest; returns how far it moved in the last
+// quarter second (once loosened up).
+function pushFor(bed: boolean): number {
+  const state = createState();
+  const tank = addTank(state, OPEN_ROOM, "t", "red");
+  tank.x = 200;
+  tank.y = 360;
+  tank.angle = 0;
+  const size = bed ? BED_SIZE : CRATE_SIZE;
+  const box = { id: 1, x: tank.x + TANK_RADIUS + size / 2, y: 360, pushMs: 0, bed };
+  state.crates.push(box);
+  for (let i = 0; i < 75; i++) step(state, OPEN_ROOM, { t: hold }, config);
+  const x0 = box.x;
+  for (let i = 0; i < 15; i++) step(state, OPEN_ROOM, { t: hold }, config);
+  return box.x - x0;
+}
+
+test("a bed is harder to push than a crate: it slides at the speed its weight allows", () => {
+  const crate = pushFor(false);
+  const bed = pushFor(true);
+  const steady = (DRIVE_SPEED / (1 + BED_MASS)) * 0.25;
+  assert.ok(Math.abs(bed - steady) < 1, `bed moved ${bed.toFixed(2)}, expected ~${steady.toFixed(2)}`);
+  assert.ok(bed < crate * 0.7, `bed ${bed.toFixed(1)} should be slower than crate ${crate.toFixed(1)}`);
+});
+
+test("Classroom starts with its beds as big movable blocks that stop bullets", () => {
+  const classroom = getMap("classroom");
+  const state = createState(classroom);
+  const beds = state.crates.filter((c) => c.bed);
+  assert.equal(beds.length, classroom.beds.length);
+  assert.ok(beds.length >= 20);
+  // A bullet fired straight at a bed drops on it.
+  const bed = beds[0]!;
+  const tank = addTank(state, classroom, "t", "red");
+  tank.x = bed.x - BED_SIZE / 2 - TANK_RADIUS - 30;
+  tank.y = bed.y;
+  tank.angle = 0;
+  step(state, classroom, { t: { held: true, pressed: true } }, config);
+  for (let i = 0; i < 30; i++) step(state, classroom, {}, config);
+  assert.equal(state.bullets.length, 0);
+  assert.ok(Math.abs(bed.x - classroom.beds[0]!.x) < 1e-6, "shooting a bed doesn't move it");
 });
 
 test("a crate settles again after it is left alone", () => {

@@ -1,6 +1,6 @@
 import { BASE_RADIUS, TILE, type Flag, type GameMap, type MapTheme, type Team, type TileKind } from "@tank/shared";
 
-// The still parts of a map: floor, walls, desks, water and spawn zones, in a light style.
+// The still parts of a map: floor, walls, water and spawn zones, in a light style.
 // They never change during a round, so each map is drawn once into an offscreen canvas
 // and copied onto the screen every frame.
 
@@ -24,7 +24,6 @@ const WALL_FRONT = 9; // height of the front face, in map pixels
 
 const WOOD = { floor: "#d39a5e", seam: "rgba(110, 60, 20, 0.22)" };
 const WATER = { fill: "#9ed3e4", wave: "rgba(255, 255, 255, 0.55)", edge: "#7fbcd0" };
-const DESK = { top: "#36a845", rim: "#2a8a37", paper: "#eef7ee" };
 
 const TEAM: Record<Team, { body: string; dark: string; zone: string }> = {
   red: { body: "#e5484d", dark: "#a8262b", zone: "rgba(229, 72, 77, 0.14)" },
@@ -64,7 +63,6 @@ function paintMap(ctx: CanvasRenderingContext2D, map: GameMap): void {
   }
   forEachTile(map, (kind, c, r) => {
     if (kind === "wall") paintWall(ctx, map, pal, c, r);
-    if (kind === "desk") paintDesk(ctx, map, c, r);
   });
 }
 
@@ -170,19 +168,6 @@ function paintWall(ctx: CanvasRenderingContext2D, map: GameMap, pal: Palette, c:
     ctx.fillRect(x, y, TILE, 4);
   }
   edges(ctx, map, c, r, (k) => k !== "wall" && k !== "outside", pal.wallEdge, 2.5);
-}
-
-// A desk: green top with a rim, and a white strip (paper) along its bottom edge.
-function paintDesk(ctx: CanvasRenderingContext2D, map: GameMap, c: number, r: number): void {
-  const x = c * TILE;
-  const y = r * TILE;
-  ctx.fillStyle = DESK.top;
-  ctx.fillRect(x, y, TILE, TILE);
-  if (kindAt(map, c, r + 1) !== "desk") {
-    ctx.fillStyle = DESK.paper;
-    ctx.fillRect(x + 3, y + TILE - 9, TILE - 6, 6);
-  }
-  edges(ctx, map, c, r, (k) => k !== "desk", DESK.rim, 3);
 }
 
 // Outline the sides of a tile that face a different kind of tile.

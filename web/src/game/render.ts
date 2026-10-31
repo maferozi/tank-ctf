@@ -2,6 +2,7 @@ import { drawBase, drawMapLayer } from "./mapArt";
 import {
   BULLET_FADE,
   BULLET_RADIUS,
+  BED_SIZE,
   CRATE_SIZE,
   FLARE_MS,
   MAX_AMMO,
@@ -65,7 +66,10 @@ export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
   const prevCrates = new Map(r.prev.crates.map((c) => [c.id, c]));
   for (const c of r.curr.crates) {
     const p = prevCrates.get(c.id);
-    drawCrate(ctx, p ? lerp(p.x, c.x, r.alpha) : c.x, p ? lerp(p.y, c.y, r.alpha) : c.y);
+    const x = p ? lerp(p.x, c.x, r.alpha) : c.x;
+    const y = p ? lerp(p.y, c.y, r.alpha) : c.y;
+    if (c.bed) drawBed(ctx, x, y);
+    else drawCrate(ctx, x, y);
   }
   const prevBoxes = new Map(r.prev.powerBoxes.map((b) => [b.id, b]));
   for (const box of r.curr.powerBoxes) {
@@ -141,6 +145,7 @@ export function drawMapPreview(ctx: CanvasRenderingContext2D, map: GameMap): voi
     drawFlagShape(ctx, flag.team, flag.x, flag.y, 1.3, 0);
   }
   for (const c of map.crates) drawCrate(ctx, c.x, c.y);
+  for (const b of map.beds) drawBed(ctx, b.x, b.y);
   map.powerBoxes.forEach((p, i) => drawPowerBox(ctx, { id: i, x: p.x, y: p.y, homeX: p.x, homeY: p.y, respawnMs: 0, pushMs: 0 }, 0));
 }
 
@@ -274,6 +279,31 @@ function drawCrate(ctx: CanvasRenderingContext2D, x: number, y: number): void {
   ctx.moveTo(x + h - 3, y - h + 3);
   ctx.lineTo(x - h + 3, y + h - 3);
   ctx.stroke();
+}
+
+// A bed: green blanket with a darker rim and two white pillows along the bottom edge,
+// with a small shadow so it reads as something standing on the floor.
+function drawBed(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+  const h = BED_SIZE / 2;
+  ctx.fillStyle = "rgba(28, 37, 70, 0.18)";
+  ctx.fillRect(x - h + 3, y - h + 5, BED_SIZE, BED_SIZE);
+  ctx.fillStyle = "#3aa64a";
+  ctx.strokeStyle = "#23753a";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.roundRect(x - h + 1.5, y - h + 1.5, BED_SIZE - 3, BED_SIZE - 3, 5);
+  ctx.fill();
+  ctx.stroke();
+  // Blanket fold.
+  ctx.fillStyle = "rgba(255, 255, 255, 0.14)";
+  ctx.fillRect(x - h + 4, y - h + 4, BED_SIZE - 8, 10);
+  // Pillows.
+  ctx.fillStyle = "#f3f8f2";
+  const pw = (BED_SIZE - 16) / 2;
+  ctx.beginPath();
+  ctx.roundRect(x - h + 6, y + h - 13, pw, 7, 3);
+  ctx.roundRect(x + 2, y + h - 13, pw, 7, 3);
+  ctx.fill();
 }
 
 // Available: a pulsing purple "?" box. Taken: a faint outline that fills back in.

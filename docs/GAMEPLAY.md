@@ -19,7 +19,7 @@ Input bounce guard: shots closer than `FIRE_COOLDOWN_MS` (100 ms) don't fire.
 
 ## Bullets
 - Speed `BULLET_SPEED` (440 px/s), range `BULLET_RANGE` (320 px), then they drop.
-- They stop on walls, crates and power boxes. Teammates can't hurt each other.
+- They stop on walls, crates, beds and power boxes. Teammates can't hurt each other.
 - One hit kills, unless the target has a shield. Respawn after `RESPAWN_MS` (2 s); the body lies
   where it fell until then.
 - A fallen body is cover for its own team: it stops the other team's bullets until that soldier
@@ -72,9 +72,12 @@ speed set by their weights:
 | Fallen soldier (until respawn) | `BODY_MASS` = 2 |
 | Crate / power box, once sliding | `CRATE_MASS` = 3 |
 | Crate / power box, at rest | 3 × `CRATE_STATIC` = 6, loosening over `CRATE_BREAKAWAY_MS` (0.6 s) |
+| Bed (Classroom), once sliding | `BED_MASS` = 6 |
+| Bed, at rest | 6 × `CRATE_STATIC` = 12, loosening the same way |
 
 So you shove a standing soldier at ⅓ speed, two soldiers walking head-on stall, and a crate
-starts slow then slides at about 40 px/s. Walls never move; whatever a wall blocks pushes back
+starts slow then slides at about 40 px/s. A bed (`BED_SIZE` 76 px, 2 × 2 tiles) slides at
+about 23 px/s; pushing a bed into the bed next to it pushes both, so packed rows barely move. Walls never move; whatever a wall blocks pushes back
 on the pusher.
 
 ## Power-up boxes
@@ -95,7 +98,8 @@ roll the same.
 ## Maps
 All maps are 28×18 tiles (40 px each), defined as text in `shared/src/maps.ts` (Arena is in
 `map.ts`). Legend: `#` wall, `.` floor, `R`/`B` red/blue spawn, `X` crate, `P` power box,
-`r`/`b` red/blue flag stand, `1`/`2` red/blue scoring pad, `T` desk (a wall), `~` water,
+`r`/`b` red/blue flag stand, `1`/`2` red/blue scoring pad, `T` bed (each 2 × 2 block is one
+bed), `~` water,
 `,` wood floor.
 
 | Map | Layout |
@@ -104,7 +108,7 @@ All maps are 28×18 tiles (40 px each), defined as text in `shared/src/maps.ts` 
 | Crossfire | Open middle with cover blocks; each base in a U of walls opening towards its spawns. |
 | Fortress | Walled-in bases with narrow doors; crates near the doors can be pushed in as barricades. |
 | Canyon | Three long lanes split by walls, joined in the middle and at the ends. |
-| Classroom | Wooden floor, a 5 × 5 grid of desks (centre one missing). Flags on the left and right edges; scoring pads in opposite corners behind a short wall. |
+| Classroom | Wooden floor packed with 30 movable beds in rows, 4 px apart side by side, with one-tile aisles between rows. Push beds aside to cut through. Flags on the left and right edges; scoring pads in opposite corners behind a short wall. |
 | Garden | Grass, a house with one wooden room per team and doors in its outer walls, a pool along the top. Pads in the top corners. |
 | Crossroads | Light tiles, plus-shaped walls, notches along the edges, a centre block. Each team's flag and pad in opposite corners. |
 

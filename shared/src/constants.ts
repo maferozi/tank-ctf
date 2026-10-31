@@ -23,6 +23,10 @@ export const CRATE_MASS = 3;
 // CRATE_MASS after being pushed for CRATE_BREAKAWAY_MS.
 export const CRATE_STATIC = 2;
 export const CRATE_BREAKAWAY_MS = 600;
+// Beds (Classroom): big movable blocks, 2 x 2 tiles, twice a crate's weight. They stick and
+// loosen like crates.
+export const BED_SIZE = 76; // px, square; leaves a 4 px gap between beds placed side by side
+export const BED_MASS = 6;
 export const SPIN_SPEED = Math.PI * 1.2; // rad/s while not driving
 // After each press the tank holds its heading this long before spinning the other way,
 // so rapid tapping keeps the barrel wobbling around one line instead of sweeping.

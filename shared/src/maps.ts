@@ -82,25 +82,26 @@ const CANYON = mirrored([
 // our own art. They are generated with exact symmetry (Red's half rotated or mirrored for
 // Blue). Here each team scores on its square pad ('1' / '2'), not at its flag.
 
-// Wooden floor with a 5 x 5 grid of desks (centre one missing). Flags on the left and
-// right edges, scoring pads in opposite corners behind a short wall.
+// Wooden floor packed with beds (2 x 2 tiles each, heavier than crates), with narrow aisles
+// between the rows: push beds aside to cut through. Flags on the left and right edges,
+// scoring pads in opposite corners behind a short wall.
 const CLASSROOM = [
   "############################",
   "#............P.........#...#",
-  "#......TT.TT.TT.TT.TT..#.2.#",
-  "#......TT.TT.TT.TT.TT..#...#",
+  "#......TTTTTTTTTTTTTT..#.2.#",
+  "#......TTTTTTTTTTTTTT..#...#",
   "#.RR...................#...#",
-  "#......TT.TT.TT.TT.TT......#",
-  "#....X.TT.TT.TT.TT.TT...BB.#",
+  "#.....TTTTTT..TTTTTT.......#",
+  "#....XTTTTTT..TTTTTT....BB.#",
   "#..........................#",
-  "#.r....TT.TT.P..TT.TT......#",
-  "#......TT.TT..P.TT.TT....b.#",
+  "#.r....TTTT..P...TTTT......#",
+  "#......TTTT...P..TTTT....b.#",
   "#..........................#",
-  "#.RR...TT.TT.TT.TT.TT.X....#",
-  "#......TT.TT.TT.TT.TT......#",
+  "#.RR....TTTTTT..TTTTTTX....#",
+  "#.......TTTTTT..TTTTTT.....#",
   "#...#...................BB.#",
-  "#...#..TT.TT.TT.TT.TT......#",
-  "#.1.#..TT.TT.TT.TT.TT......#",
+  "#...#..TTTTTTTTTTTTTT......#",
+  "#.1.#..TTTTTTTTTTTTTT......#",
   "#...#.........P............#",
   "############################",
 ];
