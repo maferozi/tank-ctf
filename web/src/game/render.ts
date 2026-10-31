@@ -1,4 +1,5 @@
 import {
+  BASE_RADIUS,
   BULLET_FADE,
   BULLET_RADIUS,
   CRATE_SIZE,
@@ -7,12 +8,14 @@ import {
   POWER_BOX_SIZE,
   POWER_RESPAWN_MS,
   RELOAD_MS,
+  FLAG_RETURN_MS,
   RESPAWN_MS,
   SHIELD_MS,
   SPEED_MS,
   TANK_RADIUS,
   TILE,
   isWallAt,
+  type Flag,
   type GameMap,
   type GameState,
   type PowerBox,
@@ -60,6 +63,7 @@ export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
   drawSpawnZones(ctx, map);
   drawGrid(ctx, map);
   drawWalls(ctx, map);
+  for (const flag of r.curr.flags) drawBase(ctx, flag);
 
   const prevCrates = new Map(r.prev.crates.map((c) => [c.id, c]));
   for (const c of r.curr.crates) {
@@ -82,11 +86,27 @@ export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
     const before = prevById.get(tank.id);
     drawFallenSoldier(ctx, before && !before.alive ? { ...tank, x: lerp(before.x, tank.x, r.alpha), y: lerp(before.y, tank.y, r.alpha) } : tank, r.nowMs);
   }
+  // Flags on the ground (home or dropped) under the soldiers.
+  const prevFlags = new Map(r.prev.flags.map((f) => [f.team, f]));
+  for (const flag of r.curr.flags) {
+    if (flag.carrier) continue;
+    const p = prevFlags.get(flag.team);
+    const smooth = p && !p.carrier && p.atHome === flag.atHome;
+    drawFlag(ctx, smooth ? { ...flag, x: lerp(p.x, flag.x, r.alpha), y: lerp(p.y, flag.y, r.alpha) } : flag, r.nowMs);
+  }
+
+  const drawn = new Map<string, Tank>();
   for (const tank of r.curr.tanks) {
     if (!tank.alive) continue;
     const before = prevById.get(tank.id);
     const t = before?.alive ? lerpTank(before, tank, r.alpha) : tank;
+    drawn.set(tank.id, t);
     drawSoldier(ctx, t, tank.id === r.localId, r.nowMs, r.names?.get(tank.id));
+  }
+  // A carried flag rides on the carrier's back, wherever the carrier is drawn.
+  for (const flag of r.curr.flags) {
+    const carrier = flag.carrier ? drawn.get(flag.carrier) : undefined;
+    if (carrier) drawCarriedFlag(ctx, flag, carrier, r.nowMs);
   }
 
   const prevBullets = new Map(r.prev.bullets.map((b) => [b.id, b]));
@@ -98,6 +118,95 @@ export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
   }
 
   drawEffects(ctx, r.effects, r.nowMs);
+  if (r.curr.winner) drawWinBanner(ctx, map, r.curr.winner, r.curr.overMs);
+}
+
+// Base: a ring in the team colour around the flag stand. Carry the enemy flag in here.
+function drawBase(ctx: CanvasRenderingContext2D, flag: Flag): void {
+  const color = COLORS[flag.team];
+  ctx.fillStyle = color.zone;
+  ctx.strokeStyle = color.body;
+  ctx.globalAlpha = 0.55;
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 5]);
+  ctx.beginPath();
+  ctx.arc(flag.homeX, flag.homeY, BASE_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  // The stand itself (visible when the flag is away).
+  ctx.fillStyle = color.dark;
+  ctx.beginPath();
+  ctx.arc(flag.homeX, flag.homeY, 4, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// A flag planted at (x, y): pole with a waving cloth. A dropped flag shows a ring that
+// empties as its automatic return gets closer.
+function drawFlag(ctx: CanvasRenderingContext2D, flag: Flag, nowMs: number): void {
+  if (!flag.atHome) {
+    ctx.strokeStyle = COLORS[flag.team].body;
+    ctx.globalAlpha = 0.6;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(flag.x, flag.y, 14, -Math.PI / 2, -Math.PI / 2 + (flag.returnMs / FLAG_RETURN_MS) * Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  drawFlagShape(ctx, flag.team, flag.x, flag.y, 1, nowMs);
+}
+
+function drawCarriedFlag(ctx: CanvasRenderingContext2D, flag: Flag, carrier: Tank, nowMs: number): void {
+  // On the back: a little behind the soldier, opposite the way they face.
+  const x = carrier.x - Math.cos(carrier.angle) * 8;
+  const y = carrier.y - Math.sin(carrier.angle) * 8;
+  drawFlagShape(ctx, flag.team, x, y, 0.8, nowMs);
+}
+
+function drawFlagShape(ctx: CanvasRenderingContext2D, team: Team, x: number, y: number, scale: number, nowMs: number): void {
+  const color = COLORS[team];
+  const wave = Math.sin(nowMs / 160) * 2.5;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+  // Pole
+  ctx.strokeStyle = "#d9dde6";
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(0, 2);
+  ctx.lineTo(0, -24);
+  ctx.stroke();
+  // Cloth
+  ctx.fillStyle = color.body;
+  ctx.strokeStyle = color.dark;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(1, -24);
+  ctx.quadraticCurveTo(9, -24 + wave, 17, -19 + wave);
+  ctx.quadraticCurveTo(9, -14 - wave, 1, -12);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawWinBanner(ctx: CanvasRenderingContext2D, map: GameMap, winner: Team, overMs: number): void {
+  const color = COLORS[winner];
+  ctx.fillStyle = "rgba(10, 12, 16, 0.55)";
+  ctx.fillRect(0, 0, map.width, map.height);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "800 72px system-ui, sans-serif";
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = color.dark;
+  ctx.strokeText(`${winner.toUpperCase()} WINS`, map.width / 2, map.height / 2 - 20);
+  ctx.fillStyle = color.body;
+  ctx.fillText(`${winner.toUpperCase()} WINS`, map.width / 2, map.height / 2 - 20);
+  ctx.font = "600 22px system-ui, sans-serif";
+  ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+  ctx.fillText(`Next round in ${Math.max(1, Math.ceil(overMs / 1000))}`, map.width / 2, map.height / 2 + 40);
 }
 
 function drawSpawnZones(ctx: CanvasRenderingContext2D, map: GameMap): void {
@@ -356,8 +465,9 @@ export function drawFallenSoldier(ctx: CanvasRenderingContext2D, t: Tank, nowMs:
   ctx.save();
   ctx.translate(t.x, t.y);
   ctx.globalAlpha = Math.min(1, t.respawnMs / FADE_OUT_MS);
-  // Falls backwards, away from where they were facing, turning a little as they drop.
-  ctx.rotate(t.angle + Math.PI + 0.35 * fall);
+  // Falls head-first in the direction they were going (forward if walking, away from
+  // the shot if standing), turning a little as they drop.
+  ctx.rotate(t.fallAngle + 0.35 * fall);
   ctx.translate(4 * fall, 0);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";

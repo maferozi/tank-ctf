@@ -147,6 +147,15 @@ export function createOnlineDriver(session: Session): Driver {
         ...predicted,
         tanks,
         bullets: [...others.bullets.filter((b) => b.owner !== me), ...predicted.bullets.filter((b) => b.owner === me)],
+        // A flag you carry (or just grabbed) follows your predicted soldier; other flags
+        // follow the server, like the players carrying them.
+        flags: others.flags.map((f) => {
+          const mineToo = predicted.flags.find((p) => p.team === f.team);
+          return mineToo && (mineToo.carrier === me || f.carrier === me) ? mineToo : f;
+        }),
+        // Only the server decides who won, so a mispredicted capture never shows a banner.
+        winner: others.winner,
+        overMs: others.overMs,
       };
 
       const allEvents = [...events, ...serverEvents];

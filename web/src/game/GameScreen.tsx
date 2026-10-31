@@ -73,6 +73,11 @@ export function GameScreen({ makeDriver, children }: { makeDriver: () => Driver;
             const style = POWER_STYLE[e.kind];
             effects.push({ ...base, kind: "text", label: style.label, color: style.color });
           }
+          if (e.type === "flag") {
+            const label = { taken: "FLAG TAKEN", dropped: "FLAG DROPPED", returned: "FLAG RETURNED" }[e.action];
+            effects.push({ ...base, kind: "text", label, color: e.team === "red" ? "#ff5a5f" : "#3fa7ff" });
+          }
+          if (e.type === "round") effects = [];
         }
         effects = pruneEffects(effects, now);
         render(ctx, { map, ...frame, localId: driver.localId, names: driver.names, effects, nowMs: now });

@@ -43,6 +43,19 @@ export const RELOAD_MS = 1500; // one round back every RELOAD_MS while below MAX
 
 export const RESPAWN_MS = 2000;
 
+// Falling. A soldier shot while walking keeps sliding forward and falls face-first; a
+// standing soldier is knocked back a little by the bullet. Either way the body slows down.
+export const BODY_FRICTION = 420; // px/s² a sliding body loses (walking speed slides ~30 px)
+export const HIT_KNOCKBACK = 70; // px/s a bullet gives a standing soldier as they fall
+
+// Capture the flag. Each team's flag stands at its base. An enemy who touches it carries
+// it; carrying it into their own base wins the round.
+export const FLAG_RADIUS = 10; // touching distance is this plus TANK_RADIUS
+export const BASE_RADIUS = 34; // a carrier this close to their own flag stand scores
+export const CARRIER_SPEED = 0.8; // walking speed multiplier while carrying a flag
+export const FLAG_RETURN_MS = 15000; // a dropped flag left alone goes home after this
+export const ROUND_RESTART_MS = 6000; // win banner, then a fresh round
+
 // Power-up boxes: touch one to get a random power. A tank holds one power at a time.
 export const POWER_BOX_SIZE = 26; // px, square
 export const POWER_RESPAWN_MS = 12000; // box comes back this long after it is taken

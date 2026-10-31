@@ -1,7 +1,9 @@
 import {
+  BODY_FRICTION,
   BULLET_RANGE,
   BULLET_RADIUS,
   BULLET_SPEED,
+  CARRIER_SPEED,
   CRATE_BREAKAWAY_MS,
   CRATE_MASS,
   CRATE_SIZE,
@@ -10,6 +12,7 @@ import {
   FIRE_COOLDOWN_MS,
   FLARE_INTERVAL_MS,
   FLARE_MS,
+  HIT_KNOCKBACK,
   MAX_AMMO,
   POWER_BOX_SIZE,
   POWER_RESPAWN_MS,
@@ -27,6 +30,7 @@ import {
   TANK_RADIUS,
   TICK_MS,
 } from "./constants";
+import { createFlags, dropFlagOf, isCarrying, tickFlags, type Flag } from "./flags";
 import { circleHitsWall, type GameMap, type Team } from "./map";
 import { contact, resolveContacts, shove, type Body } from "./physics";
 
@@ -53,6 +57,10 @@ export interface Tank {
   alive: boolean;
   respawnMs: number;
   spawnIndex: number;
+  // While down: the body's slide (px/s) and the direction it fell, head first.
+  vx: number;
+  vy: number;
+  fallAngle: number;
 }
 
 export interface Bullet {
@@ -95,7 +103,10 @@ export type GameEvent =
   | { type: "drop"; tankId: string; x: number; y: number } // bullet ran out of range
   | { type: "kill"; tankId: string; by: string; x: number; y: number }
   | { type: "power"; tankId: string; kind: PowerKind; x: number; y: number }
-  | { type: "shieldHit"; tankId: string; x: number; y: number };
+  | { type: "shieldHit"; tankId: string; x: number; y: number }
+  | { type: "flag"; action: "taken" | "dropped" | "returned"; team: Team; tankId: string; x: number; y: number }
+  | { type: "capture"; team: Team; tankId: string; x: number; y: number } // team = winner
+  | { type: "round"; tankId: string; x: number; y: number }; // a new round started
 
 export interface GameState {
   tick: number;
@@ -103,6 +114,9 @@ export interface GameState {
   bullets: Bullet[];
   crates: Crate[];
   powerBoxes: PowerBox[];
+  flags: Flag[];
+  winner: Team | null; // set when a flag is captured; the round is over
+  overMs: number; // while over: time until the next round starts
   rng: number; // seed for power-up rolls, so server and clients roll the same
   nextBulletId: number;
   events: GameEvent[]; // events produced by the last step only
@@ -119,19 +133,36 @@ export interface SimConfig {
   holdMs: number;
 }
 
-// Pass the map to place its crates; without one the arena starts empty (handy in tests).
+// Pass the map to place its crates, power boxes and flags; without one the arena starts
+// empty (handy in tests).
 export function createState(map?: GameMap): GameState {
-  const crates = (map?.crates ?? []).map((c, i) => ({ id: i + 1, x: c.x, y: c.y, pushMs: 0 }));
-  const powerBoxes = (map?.powerBoxes ?? []).map((p, i) => ({
-    id: i + 1,
-    x: p.x,
-    y: p.y,
-    homeX: p.x,
-    homeY: p.y,
-    respawnMs: 0,
-    pushMs: 0,
-  }));
-  return { tick: 0, tanks: [], bullets: [], crates, powerBoxes, rng: 0x2f6b1d3, nextBulletId: 1, events: [] };
+  return {
+    tick: 0,
+    tanks: [],
+    bullets: [],
+    ...mapObjects(map),
+    winner: null,
+    overMs: 0,
+    rng: 0x2f6b1d3,
+    nextBulletId: 1,
+    events: [],
+  };
+}
+
+function mapObjects(map?: GameMap): Pick<GameState, "crates" | "powerBoxes" | "flags"> {
+  return {
+    crates: (map?.crates ?? []).map((c, i) => ({ id: i + 1, x: c.x, y: c.y, pushMs: 0 })),
+    powerBoxes: (map?.powerBoxes ?? []).map((p, i) => ({
+      id: i + 1,
+      x: p.x,
+      y: p.y,
+      homeX: p.x,
+      homeY: p.y,
+      respawnMs: 0,
+      pushMs: 0,
+    })),
+    flags: map ? createFlags(map) : [],
+  };
 }
 
 export function cloneState(s: GameState): GameState {
@@ -141,6 +172,9 @@ export function cloneState(s: GameState): GameState {
     bullets: s.bullets.map((b) => ({ ...b })),
     crates: s.crates.map((c) => ({ ...c })),
     powerBoxes: s.powerBoxes.map((p) => ({ ...p })),
+    flags: s.flags.map((f) => ({ ...f })),
+    winner: s.winner,
+    overMs: s.overMs,
     rng: s.rng,
     nextBulletId: s.nextBulletId,
     events: [...s.events],
@@ -172,6 +206,9 @@ export function addTank(state: GameState, map: GameMap, id: string, team: Team):
     alive: true,
     respawnMs: 0,
     spawnIndex,
+    vx: 0,
+    vy: 0,
+    fallAngle: 0,
   };
   placeAtSpawn(tank, map);
   state.tanks.push(tank);
@@ -205,8 +242,16 @@ export function step(
   state.tick++;
   state.events = [];
 
+  // Round over: everything holds still under the win banner, then a fresh round.
+  if (state.winner) {
+    state.overMs -= TICK_MS;
+    if (state.overMs <= 1e-6) resetRound(state, map);
+    return;
+  }
+
   for (const tank of state.tanks) {
     if (!tank.alive) {
+      slideBody(tank, map, dt);
       tank.respawnMs -= TICK_MS;
       if (tank.respawnMs <= 0) {
         placeAtSpawn(tank, map);
@@ -214,6 +259,7 @@ export function step(
         tank.cooldownMs = 0;
         tank.ammo = MAX_AMMO;
         tank.reloadMs = 0;
+        tank.vx = tank.vy = 0;
       }
       tank.held = false;
       tank.pressMs = 0;
@@ -259,7 +305,7 @@ export function step(
     tank.held = input.held;
 
     if (tank.driving) {
-      const dist = DRIVE_SPEED * (tank.speedMs > 0 ? SPEED_BOOST : 1) * dt;
+      const dist = walkSpeed(state, tank) * dt;
       shove(tankBody(tank), map, Math.cos(tank.angle) * dist, Math.sin(tank.angle) * dist);
     } else if (tank.spinPauseMs > 0) {
       tank.spinPauseMs -= TICK_MS;
@@ -273,6 +319,74 @@ export function step(
   collectPowerBoxes(state);
   pushBodies(state, map);
   stepBullets(state, map, dt);
+  tickFlags(state);
+}
+
+function walkSpeed(state: GameState, tank: Tank): number {
+  return DRIVE_SPEED * (tank.speedMs > 0 ? SPEED_BOOST : 1) * (isCarrying(state, tank.id) ? CARRIER_SPEED : 1);
+}
+
+// A fallen body keeps the momentum it had and slides to a stop; walls stop it dead.
+function slideBody(tank: Tank, map: GameMap, dt: number): void {
+  const speed = Math.hypot(tank.vx, tank.vy);
+  if (speed < 1) {
+    tank.vx = tank.vy = 0;
+    return;
+  }
+  const want = speed * dt;
+  const moved = shove(tankBody(tank), map, tank.vx * dt, tank.vy * dt);
+  const slower = moved < want * 0.5 ? 0 : Math.max(0, speed - BODY_FRICTION * dt) / speed;
+  tank.vx *= slower;
+  tank.vy *= slower;
+}
+
+// Shot: a walking soldier keeps going and falls forward; a standing one is knocked back
+// along the bullet's path. Any flag they carried drops where they fall.
+function killTank(state: GameState, t: Tank, bullet: Bullet): void {
+  if (t.driving) {
+    const speed = walkSpeed(state, t);
+    t.vx = Math.cos(t.angle) * speed;
+    t.vy = Math.sin(t.angle) * speed;
+    t.fallAngle = t.angle;
+  } else {
+    const along = Math.atan2(bullet.vy, bullet.vx);
+    t.vx = Math.cos(along) * HIT_KNOCKBACK;
+    t.vy = Math.sin(along) * HIT_KNOCKBACK;
+    t.fallAngle = along;
+  }
+  t.alive = false;
+  t.driving = false;
+  clearPowers(t);
+  t.respawnMs = RESPAWN_MS;
+  state.events.push({ type: "kill", tankId: t.id, by: bullet.owner, x: t.x, y: t.y });
+  dropFlagOf(state, t);
+}
+
+// A fresh round with the same players: everyone back at their spawn, full ammo, no
+// powers, flags home, crates and power boxes back where the map puts them.
+export function resetRound(state: GameState, map: GameMap): void {
+  Object.assign(state, mapObjects(map));
+  state.winner = null;
+  state.overMs = 0;
+  state.bullets = [];
+  for (const t of state.tanks) {
+    placeAtSpawn(t, map);
+    Object.assign(t, {
+      alive: true,
+      respawnMs: 0,
+      held: false,
+      pressMs: 0,
+      driving: false,
+      cooldownMs: 0,
+      ammo: MAX_AMMO,
+      reloadMs: 0,
+      spinPauseMs: 0,
+      vx: 0,
+      vy: 0,
+    });
+    clearPowers(t);
+  }
+  state.events.push({ type: "round", tankId: "", x: 0, y: 0 });
 }
 
 function powerBoxBody(p: PowerBox): Body {
@@ -448,10 +562,7 @@ function stepBullets(state: GameState, map: GameMap, dt: number): void {
           state.events.push({ type: "shieldHit", tankId: t.id, x: b.x, y: b.y });
           return false;
         }
-        t.alive = false;
-        clearPowers(t);
-        t.respawnMs = RESPAWN_MS;
-        state.events.push({ type: "kill", tankId: t.id, by: b.owner, x: t.x, y: t.y });
+        killTank(state, t, b);
         return false;
       }
     }

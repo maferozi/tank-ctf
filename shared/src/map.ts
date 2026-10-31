@@ -17,9 +17,11 @@ export interface GameMap {
   spawns: Record<Team, Spawn[]>;
   crates: { x: number; y: number }[]; // starting centres of movable crates
   powerBoxes: { x: number; y: number }[]; // power-up box spots
+  flags: Partial<Record<Team, { x: number; y: number }>>; // flag stands (team bases)
 }
 
-// '#' wall, '.' floor, 'R' red spawn, 'B' blue spawn, 'X' movable crate, 'P' power-up box.
+// '#' wall, '.' floor, 'R' red spawn, 'B' blue spawn, 'X' movable crate, 'P' power-up box,
+// 'r' / 'b' red / blue flag stand (the team's base).
 const ARENA = [
   "############################",
   "#.............P............#",
@@ -29,8 +31,8 @@ const ARENA = [
   "#....##..#...##...#..##....#",
   "#....##.......##.....##....#",
   "#.......X..........X.......#",
-  "#...#######..P...#######...#",
-  "#...#######......#######...#",
+  "#...#######..P...#######.b.#",
+  "#.r.#######......#######...#",
   "#.......X..........X.......#",
   "#....##.....##.......##....#",
   "#....##..#...##...#..##....#",
@@ -47,6 +49,7 @@ export function parseMap(rows: string[]): GameMap {
   const spawns: Record<Team, Spawn[]> = { red: [], blue: [] };
   const crates: { x: number; y: number }[] = [];
   const powerBoxes: { x: number; y: number }[] = [];
+  const flags: GameMap["flags"] = {};
   rows.forEach((row, r) => {
     if (row.length !== cols) throw new Error(`map row ${r} has length ${row.length}, expected ${cols}`);
     for (let c = 0; c < cols; c++) {
@@ -59,9 +62,11 @@ export function parseMap(rows: string[]): GameMap {
       if (ch === "B") spawns.blue.push({ x, y, angle: Math.PI });
       if (ch === "X") crates.push({ x, y });
       if (ch === "P") powerBoxes.push({ x, y });
+      if (ch === "r") flags.red = { x, y };
+      if (ch === "b") flags.blue = { x, y };
     }
   });
-  return { cols, rows: rows.length, width: cols * TILE, height: rows.length * TILE, walls, spawns, crates, powerBoxes };
+  return { cols, rows: rows.length, width: cols * TILE, height: rows.length * TILE, walls, spawns, crates, powerBoxes, flags };
 }
 
 export const DEFAULT_MAP = parseMap(ARENA);

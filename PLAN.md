@@ -51,6 +51,11 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
   The join form shows each team's players live (`GET /rooms/CODE` on the game server), so
   you can see the teams before picking one. Two-bot smoke test: `npm run smoke -w server`.
 
+- Phase 4 core done (capture the flag): flags at each base, pick up / carry / drop / return /
+  auto-return, carrier at 0.8× speed, capture wins the round with a banner and a fresh round
+  after 6 s. Bodies now slide with momentum when shot while walking. See `docs/GAMEPLAY.md`.
+  Still open: score to N captures and a round timer, if wanted.
+
 ## Known gaps after phase 2
 - 8-player load test passed (see `docs/NETCODE.md`): steady 60 Hz server, 30 Hz snapshots, no
   hitches, identical state for all.

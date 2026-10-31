@@ -8,6 +8,7 @@ export function blendStates(a: GameState, b: GameState, t: number): GameState {
   const bullets = new Map(a.bullets.map((x) => [x.id, x]));
   const crates = new Map(a.crates.map((x) => [x.id, x]));
   const boxes = new Map(a.powerBoxes.map((x) => [x.id, x]));
+  const flags = new Map(a.flags.map((x) => [x.team, x]));
   return {
     ...b,
     tanks: b.tanks.map((x) => {
@@ -27,6 +28,11 @@ export function blendStates(a: GameState, b: GameState, t: number): GameState {
       const p = boxes.get(x.id);
       // A box that just came home must not slide back.
       return p && p.respawnMs <= 0 && x.respawnMs <= 0 ? { ...x, x: lerp(p.x, x.x, t), y: lerp(p.y, x.y, t) } : x;
+    }),
+    flags: b.flags.map((x) => {
+      const p = flags.get(x.team);
+      // Carried flags are drawn on their carrier; a flag sent home must not slide back.
+      return p && p.atHome === x.atHome ? { ...x, x: lerp(p.x, x.x, t), y: lerp(p.y, x.y, t) } : x;
     }),
   };
 }

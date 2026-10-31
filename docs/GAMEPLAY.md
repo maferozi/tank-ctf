@@ -26,6 +26,26 @@ Input bounce guard: shots closer than `FIRE_COOLDOWN_MS` (100 ms) don't fire.
   respawns. Teammates' bullets pass straight through it. Bodies are solid and can be pushed (see
   weights below), and the cover moves with them.
 
+## Falling
+- Shot while walking: the body keeps sliding forward and falls face-first, slowing by
+  `BODY_FRICTION` (420 px/s²), so about 30 px at walking speed. Walls and crates stop it.
+- Shot while standing: knocked back along the bullet's path at `HIT_KNOCKBACK` (70 px/s),
+  a few pixels, and falls away from the shooter.
+
+## Capture the flag
+- Each team's flag stands at its base, a dashed ring (`BASE_RADIUS` 34 px) on the map:
+  `r` / `b` in the map legend. Red's base is on the left, Blue's on the right.
+- Touch the enemy flag to pick it up; it rides on your back. Carriers walk at
+  `CARRIER_SPEED` (0.8×).
+- Carry it into your own base to win the round. A "RED WINS" / "BLUE WINS" banner shows,
+  everything freezes, and after `ROUND_RESTART_MS` (6 s) a fresh round starts: everyone back at
+  spawn, flags home, crates and power boxes reset.
+- Shoot the carrier and the flag drops where they fall. An enemy can grab it again; one of its
+  own team touching it sends it home. Left alone it goes home after `FLAG_RETURN_MS` (15 s),
+  shown by a ring that empties around it.
+- Your own flag at home can't be picked up by your team. Scoring doesn't require your own flag
+  to be home.
+
 ## Pushing and weight
 Soldiers, crates and power boxes never overlap. Two bodies pushing each other move together at a
 speed set by their weights:
@@ -59,5 +79,5 @@ roll the same.
 
 ## Map
 `shared/src/map.ts`, a 28×18 tile grid (40 px tiles). Legend: `#` wall, `.` floor,
-`R`/`B` red/blue spawn, `X` crate, `P` power box. The current arena is a placeholder until the
-CTF rules exist.
+`R`/`B` red/blue spawn, `X` crate, `P` power box, `r`/`b` red/blue flag stand (base). The arena
+is still a placeholder; proper CTF maps come in the maps-and-art phase.
