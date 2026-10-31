@@ -28,5 +28,7 @@ Read `PLAN.md` (decisions, phases, status) and `docs/GAMEPLAY.md` (rules and num
   every rule change.
 - Gameplay changes come from Asad's playtesting; keep his numbers exactly and say what changed.
 - Keep the game screen clean: no HUD panels unless asked.
-- Personal repo: commit as `Muhammad Asad Ferozi <maferozi373@gmail.com>` (set in the repo's
-  git config). No remote yet; ask before creating one or pushing.
+- Personal repo, private on GitHub: `maferozi/tank-ctf`, remote
+  `git@github-personal:maferozi/tank-ctf.git`. Commit as
+  `Muhammad Asad Ferozi <maferozi373@gmail.com>` (set in the repo's git config). Ask before
+  pushing.
