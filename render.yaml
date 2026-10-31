@@ -1,0 +1,15 @@
+# Render Blueprint: the game server (Colyseus over WebSockets).
+# The web app is deployed separately on Vercel (it can't hold WebSocket connections).
+services:
+  - type: web
+    name: tank-ctf-server
+    runtime: node
+    region: singapore # closest Render region to Pakistan
+    plan: free # sleeps after 15 min without traffic; ~1 min to wake
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"

@@ -23,11 +23,14 @@ const roomInfo = createEndpoint("/rooms/:code", { method: "GET" }, async (ctx) =
   return ctx.json(info);
 });
 
+// For the host's health check (Render pings this to know the server is up).
+const health = createEndpoint("/health", { method: "GET" }, async (ctx) => ctx.json({ ok: true }));
+
 const server = defineServer({
   rooms: {
     game: defineRoom(GameRoom),
   },
-  routes: createRouter({ roomInfo }),
+  routes: createRouter({ roomInfo, health }),
 });
 
 await listen(server, PORT);
