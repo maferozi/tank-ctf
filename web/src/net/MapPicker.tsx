@@ -22,6 +22,21 @@ export function MapPreview({ map, width }: { map: GameMap; width: number }) {
   return <canvas ref={ref} className="map-preview" style={{ width, height }} aria-hidden />;
 }
 
+// Read-only strip of the map for each round (join page, lobby).
+export function RoundMaps({ maps }: { maps: string[] }) {
+  return (
+    <div className="round-slots join-maps" aria-label="Maps">
+      {maps.map((id, i) => (
+        <div key={i} className="round-slot">
+          {maps.length > 1 && <span className="round-label">R{i + 1}</span>}
+          <MapPreview map={getMap(id)} width={maps.length > 1 ? 52 : 150} />
+          <span className="round-map">{getMap(id).name}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // One map per round. Tap a round, then tap a map to put it in that round (the next round
 // is selected after each pick, so tapping maps in order fills the rounds in order).
 export function MapPicker({ maps, onChange }: { maps: string[]; onChange: (maps: string[]) => void }) {

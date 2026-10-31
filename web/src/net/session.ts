@@ -1,13 +1,17 @@
 import { Client, type Room } from "@colyseus/sdk";
-import { MSG, ROOM_NAME, type CreateOptions, type JoinOptions, type Player, type RoomInfo, type Roster } from "@tank/shared";
+import { MSG, ROOM_NAME, type CreateOptions, type JoinOptions, type RoomInfo, type Roster, type Team } from "@tank/shared";
 
 // The one live connection to a game room. Kept outside React so it survives the
 // navigation from the home page to /room/CODE.
 export interface Session {
   room: Room;
-  roster: Player[];
-  left: boolean; // the connection closed
+  roster: Roster | null; // null until the server's first roster arrives
+  left: boolean; // the connection closed for good
   subscribe(listener: () => void): () => void; // roster or connection changes
+  setTeam(team: Team): void; // lobby: switch your own team
+  movePlayer(playerId: string, team: Team): void; // lobby, host only
+  start(): void; // lobby, host only
+  leave(): Promise<void>; // leave on purpose: gives up the seat
 }
 
 let current: Session | null = null;
@@ -37,26 +41,58 @@ export async function fetchRoomInfo(code: string): Promise<RoomInfo | null> {
   return (await res.json()) as RoomInfo;
 }
 
+// A reload of the page reconnects with this token (kept per tab, per room) and gets the
+// same seat and soldier back, as long as it's within RECONNECT_SECONDS.
+const tokenKey = (code: string) => `tank-ctf:reconnect:${code}`;
+
+function saveToken(room: Room): void {
+  try {
+    sessionStorage.setItem(tokenKey(room.roomId), room.reconnectionToken);
+  } catch {
+    // Storage blocked: a reload just means joining again.
+  }
+}
+
+function forgetToken(code: string): void {
+  try {
+    sessionStorage.removeItem(tokenKey(code));
+  } catch {
+    // Nothing to forget.
+  }
+}
+
 function track(room: Room): Session {
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((l) => l());
   const session: Session = {
     room,
-    roster: [],
+    roster: null,
     left: false,
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    setTeam: (team) => room.send(MSG.team, { team }),
+    movePlayer: (playerId, team) => room.send(MSG.move, { playerId, team }),
+    start: () => room.send(MSG.start),
+    async leave() {
+      forgetToken(room.roomId);
+      if (current === session) current = null;
+      await room.leave(true);
+    },
   };
+  saveToken(room);
+  // The SDK reconnects by itself after a network blip; the token changes when it does.
+  room.onReconnect(() => saveToken(room));
   room.onMessage(MSG.roster, (roster: Roster) => {
-    session.roster = roster.players;
+    session.roster = roster;
     notify();
   });
   // Snapshots can arrive before the game screen subscribes; ignore those quietly.
   room.onMessage(MSG.snapshot, () => {});
   room.onLeave(() => {
     session.left = true;
+    forgetToken(room.roomId);
     notify();
   });
   room.send(MSG.ready);
@@ -73,6 +109,37 @@ export async function joinRoom(code: string, options: JoinOptions): Promise<Sess
   return track(await new Client(serverUrl()).joinById(code, options));
 }
 
+// After a page reload: take back our seat in this room if it is still being held.
+// null if there is nothing to take back (never joined, left, or the hold ran out).
+// Concurrent calls share one attempt: a token can only be used once, and React's dev-mode
+// double mount would otherwise try twice.
+const rejoining = new Map<string, Promise<Session | null>>();
+
+export function rejoinRoom(code: string): Promise<Session | null> {
+  let attempt = rejoining.get(code);
+  if (!attempt) {
+    attempt = tryRejoin(code).finally(() => rejoining.delete(code));
+    rejoining.set(code, attempt);
+  }
+  return attempt;
+}
+
+async function tryRejoin(code: string): Promise<Session | null> {
+  let token: string | null = null;
+  try {
+    token = sessionStorage.getItem(tokenKey(code));
+  } catch {
+    return null;
+  }
+  if (!token) return null;
+  try {
+    return track(await new Client(serverUrl()).reconnect(token));
+  } catch {
+    forgetToken(code);
+    return null;
+  }
+}
+
 // The live session for this room code, if we have one.
 export function sessionFor(code: string): Session | null {
   if (releaseTimer) {
@@ -87,7 +154,7 @@ export function sessionFor(code: string): Session | null {
 export function releaseSession(): void {
   if (releaseTimer) clearTimeout(releaseTimer);
   releaseTimer = setTimeout(() => {
-    current?.room.leave();
+    void current?.leave();
     current = null;
     releaseTimer = null;
   }, 200);

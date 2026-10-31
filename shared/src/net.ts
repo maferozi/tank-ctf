@@ -17,7 +17,25 @@ export const MSG = {
   // client -> server, once its listeners are set up: "send me the roster". The roster
   // broadcast during the join arrives before a new client can listen for it.
   ready: "ready",
+  // Lobby only (ignored during a match, when teams are locked):
+  team: "team", // client -> server: TeamMessage, switch your own team
+  move: "move", // host -> server: MoveMessage, put another player on a team
+  start: "start", // host -> server: start the match
 } as const;
+
+// Seconds a dropped player's soldier waits for them to reconnect (refresh, network blip).
+export const RECONNECT_SECONDS = 30;
+
+export type RoomPhase = "lobby" | "playing";
+
+export interface TeamMessage {
+  team: Team;
+}
+
+export interface MoveMessage {
+  playerId: string;
+  team: Team;
+}
 
 export interface JoinOptions {
   name: string;
@@ -45,10 +63,21 @@ export interface Player {
   id: string; // Colyseus sessionId, also the tank id
   name: string;
   team: Team;
+  away: boolean; // connection dropped; their seat is held for RECONNECT_SECONDS
 }
 
+// Everything about the room except the game itself, sent on every change.
 export interface Roster {
   players: Player[];
+  hostId: string | null; // the room creator; passes to the next player if they leave
+  phase: RoomPhase;
+  rounds: MatchRounds;
+  maps: string[];
+}
+
+// The host can start once both teams have someone in them.
+export function canStart(roster: Pick<Roster, "players">): boolean {
+  return roster.players.some((p) => p.team === "red") && roster.players.some((p) => p.team === "blue");
 }
 
 // GET {server}/rooms/CODE: who is in a room, so the join form can show the teams before
@@ -59,13 +88,11 @@ export interface RoomInfo {
   maxPlayers: number;
   rounds: MatchRounds;
   maps: string[]; // map id per round
+  phase: RoomPhase;
 }
 
 // What a room publishes in its listing metadata (read by GET /rooms/CODE).
-export interface RoomMetadata extends Roster {
-  rounds: MatchRounds;
-  maps: string[];
-}
+export type RoomMetadata = Roster;
 
 // Room codes: 4 letters, no look-alikes (I/L/O/0/1), easy to read out loud.
 const CODE_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ";

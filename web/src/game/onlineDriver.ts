@@ -98,7 +98,7 @@ export function createOnlineDriver(session: Session): Driver {
     map: DEFAULT_MAP,
     localId: me,
     get names() {
-      return new Map(session.roster.map((p) => [p.id, p.name]));
+      return new Map((session.roster?.players ?? []).map((p) => [p.id, p.name]));
     },
     frame(now, button) {
       // Your button, one sample per sim tick, predicted locally and sent to the server.

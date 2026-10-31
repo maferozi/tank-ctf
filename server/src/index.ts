@@ -17,6 +17,7 @@ const roomInfo = createEndpoint("/rooms/:code", { method: "GET" }, async (ctx) =
     maxPlayers: room.maxClients ?? MAX_PLAYERS,
     rounds: isMatchRounds(metadata?.rounds) ? metadata.rounds : 1,
     maps: [],
+    phase: metadata?.phase === "playing" ? "playing" : "lobby",
   };
   info.maps = roundMaps(info.rounds, metadata?.maps);
   return ctx.json(info);

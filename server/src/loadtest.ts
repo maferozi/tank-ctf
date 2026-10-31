@@ -107,6 +107,9 @@ for (let i = 2; i <= PLAYERS; i++) {
   const room = await new Client(url).joinById(first.roomId, { name: `Bot${i}`, team: i % 2 ? "red" : "blue" });
   bots.push(new Bot(room));
 }
+// Rooms start in the lobby; the first bot is the host and starts the match.
+first.send(MSG.start);
+await sleep(300);
 console.log(`room ${first.roomId}: ${bots.length} bots joined, playing for ${SECONDS} s against ${url}`);
 
 // With a full room, one more player must be turned away.

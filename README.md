@@ -21,8 +21,10 @@ and a shared TypeScript game simulation that runs on both the server and every p
 - **Power-ups.** Purple "?" boxes give a shield, a speed boost or a flare (4-way bursts), one at
   a time, 14 s each.
 - **Online play.** Create a room, share the 4-letter code or link; the join page shows who is on
-  each team. The server runs the game; your own soldier is predicted on your device, so controls
-  react within a frame or two even with a 100 ms connection.
+  each team. In the lobby players pick sides, the host can move people, and starts the match;
+  teams lock until it ends. Reloading or a dropped connection rejoins you within 30 s. The
+  server runs the game; your own soldier is predicted on your device, so controls react within
+  a frame or two even with a 100 ms connection.
 - **Phones and desktop.** Desktop: click anywhere or press Space. Phones: a big TAP button next
   to the map.
 
@@ -42,7 +44,7 @@ Both must be running to play online.
 | Page | What it is |
 |---|---|
 | `/` | Pick a name, team, match type and maps; create a room or join one by code. |
-| `/room/CODE` | A room. Share this link: it shows the match type, maps and teams, then joins. |
+| `/room/CODE` | A room. Share this link: it shows the match type, maps and teams, then joins the lobby. |
 | `/play` | Solo practice against spinning targets. |
 | `/dev/sprites` | Dev only: the art drawn large, for reviewing graphics. |
 
@@ -77,7 +79,7 @@ the browser at another server; `window.__net` in the console shows prediction st
 | `PLAN.md` | Decisions, phases and status. |
 
 ## Status
-Done: solo prototype, online rooms, client prediction, capture the flag, match types and map
-selection. Next: a proper lobby (host starts the match, teams lock, Leave button, rejoin), then
-voice chat, more maps and art, and deploying it so friends can play from their phones. See
+Done: solo prototype, online rooms, client prediction, capture the flag, match types, map
+selection and the lobby. Next: voice chat, more maps and art, and deploying it so friends can
+play from their phones. See
 [PLAN.md](PLAN.md).

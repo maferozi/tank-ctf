@@ -251,10 +251,16 @@ a {
 }
 
 /* In-game: room code chip and the disconnected overlay. */
-.room-chip {
+/* Room code and Leave, top-left over the game. */
+.game-chips {
   position: absolute;
   top: 8px;
   left: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+.room-chip {
   padding: 6px 10px;
   border-radius: 999px;
   border: none;
@@ -413,4 +419,145 @@ a {
 
 .join-maps .round-slot {
   cursor: default;
+}
+
+.room-chip.confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  cursor: default;
+}
+
+.room-chip.confirm button {
+  font: inherit;
+  border: none;
+  border-radius: 999px;
+  padding: 2px 10px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.room-chip.confirm button:first-of-type {
+  background: var(--red);
+}
+
+/* Lobby: both teams side by side (stacked on narrow phones). */
+.lobby {
+  justify-content: flex-start;
+  padding-top: 32px;
+}
+
+.lobby .room-chip {
+  font-size: 13px;
+}
+
+.lobby-teams {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  width: min(100%, 520px);
+  text-align: left;
+}
+
+@media (max-width: 420px) {
+  .lobby-teams {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lobby-team {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 2px solid #343a48;
+  background: var(--panel);
+}
+
+.lobby-team.red {
+  border-color: color-mix(in srgb, var(--red) 60%, #343a48);
+}
+
+.lobby-team.blue {
+  border-color: color-mix(in srgb, var(--blue) 60%, #343a48);
+}
+
+.lobby-team h2 {
+  margin: 0;
+  font-size: 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.lobby-team.red h2 {
+  color: var(--red);
+}
+
+.lobby-team.blue h2 {
+  color: var(--blue);
+}
+
+.lobby-team ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 60px;
+}
+
+.lobby-team li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.lobby-team li.me {
+  background: rgba(255, 209, 102, 0.12);
+}
+
+.lobby-team li.empty {
+  color: var(--muted);
+  background: none;
+  font-size: 13px;
+}
+
+.lobby-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lobby-team .away {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.lobby-team .move {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid #3a4050;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.link-button {
+  border: none;
+  background: none;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }

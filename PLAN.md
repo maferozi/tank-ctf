@@ -59,6 +59,12 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
   map for each round from 4 maps (Arena, Crossfire, Fortress, Canyon) shown as preview cards.
   Still open: a round timer, if wanted.
 
+- Phase 3 done (lobby): rooms open in a lobby with Red and Blue lists. Players switch their own
+  team; the host (★, the creator, passed on if they leave) moves players and starts once both
+  teams have someone. Teams lock during the match; late joiners go straight onto their team.
+  In-game Leave button with a confirm. A dropped player (refresh, network blip) keeps their seat
+  and soldier for 30 s and rejoins automatically. After the match everyone returns to the lobby.
+
 ## Known gaps after phase 2
 - 8-player load test passed (see `docs/NETCODE.md`): steady 60 Hz server, 30 Hz snapshots, no
   hitches, identical state for all.
@@ -73,7 +79,7 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
 ## Build order
 1. Solo prototype. Done.
 2. Online: rooms by code, everyone on one map, server decides state. Done.
-3. Lobby and teams: Red/Blue lists, host starts, teams lock, Leave button.
+3. Lobby and teams: Red/Blue lists, host starts, teams lock, Leave button, rejoin. Done.
 4. Capture the flag: flags, bases, scoring, timer, win screen.
 5. Voice chat: LiveKit room per lobby, mute, speaking indicators.
 6. Maps and art: more maps, floor and prop art, sounds. (4 maps exist; see docs/GAMEPLAY.md.)
