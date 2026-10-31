@@ -41,10 +41,14 @@ export function GameScreen({ makeDriver, children }: { makeDriver: () => Driver;
     const button = new OneButton(padEl ?? surface);
     let effects: Effect[] = [];
 
-    // Fit the map into the stage, which is the screen minus the pad on touch devices.
+    // Fit the map inside the stage's padding (room for the outline); the stage is the
+    // screen minus the pad on touch devices.
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      const scale = Math.min(stage.clientWidth / map.width, stage.clientHeight / map.height);
+      const pad = getComputedStyle(stage);
+      const width = stage.clientWidth - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight);
+      const height = stage.clientHeight - parseFloat(pad.paddingTop) - parseFloat(pad.paddingBottom);
+      const scale = Math.max(0.01, Math.min(width / map.width, height / map.height));
       canvas.style.width = `${Math.floor(map.width * scale)}px`;
       canvas.style.height = `${Math.floor(map.height * scale)}px`;
       canvas.width = Math.floor(map.width * scale * dpr);

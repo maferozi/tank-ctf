@@ -78,6 +78,10 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
 - Maps and look (31 Oct 2026): light theme everywhere. Three maps recreated from the original
   app's layouts (Classroom, Garden, Crossroads) with scoring pads separate from the flag stands,
   water that blocks walking but not bullets, desks, and per-map floor art (wood, grass, tiles).
+- Look (31 Oct 2026): cartoon game style. Sky-blue striped background, white panels with thick
+  ink outlines and hard shadows, chunky press-down buttons, Lilita One (titles, buttons, in-game
+  banners) and Nunito (text). Room code shown as letter tiles in the lobby. Walls drawn as
+  raised blocks; Arena has a sand floor with teal walls. Solo practice has a Menu chip.
 
 ## Known gaps after phase 2
 - 8-player load test passed (see `docs/NETCODE.md`): steady 60 Hz server, 30 Hz snapshots, no

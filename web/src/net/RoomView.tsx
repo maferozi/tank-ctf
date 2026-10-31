@@ -7,6 +7,7 @@ import { useEffect, useReducer, useState, type FormEvent } from "react";
 import { GameScreen } from "@/game/GameScreen";
 import { createOnlineDriver } from "@/game/onlineDriver";
 import { Lobby } from "./Lobby";
+import { Logo } from "./Logo";
 import { RoomChip } from "./RoomChip";
 import { RoundMaps } from "./MapPicker";
 import { PlayerFields, usePlayerSetup } from "./PlayerSetup";
@@ -52,7 +53,7 @@ export function RoomView({ rawCode }: { rawCode: string }) {
 
   if (!code) {
     return (
-      <main className="home">
+      <main className="home message">
         <h1>No such room</h1>
         <p>Room codes are 4 letters, like KQTR.</p>
         <Link className="button" href="/">
@@ -65,7 +66,7 @@ export function RoomView({ rawCode }: { rawCode: string }) {
   if (!session) return <JoinForm code={code} onJoined={setSession} />;
   if (session.left) {
     return (
-      <main className="home">
+      <main className="home message">
         <h1>Room {code}</h1>
         <p>Disconnected from the room.</p>
         <Link className="button" href="/">
@@ -75,7 +76,7 @@ export function RoomView({ rawCode }: { rawCode: string }) {
     );
   }
   const roster = session.roster;
-  if (!roster) return <main className="home"><p>Connecting…</p></main>;
+  if (!roster) return <main className="home message"><p>Connecting…</p></main>;
   if (roster.phase === "lobby") return <Lobby session={session} roster={roster} code={code} onLeave={leave} />;
 
   return (
@@ -135,7 +136,7 @@ function JoinForm({ code, onJoined }: { code: string; onJoined: (s: Session) => 
 
   if (info === null) {
     return (
-      <main className="home">
+      <main className="home message">
         <h1>Room {code}</h1>
         <p>This room doesn't exist or has closed.</p>
         <Link className="button" href="/">
@@ -160,13 +161,18 @@ function JoinForm({ code, onJoined }: { code: string; onJoined: (s: Session) => 
 
   return (
     <main className="home">
-      <h1>Room {code}</h1>
-      {info && <p>{info.rounds > 1 ? `Tournament · ${info.rounds} rounds` : "Single match"}</p>}
-      {info && <RoundMaps maps={info.maps} />}
-      {info?.phase === "playing" && <p className="hint">A match is on: you'll join your team straight away.</p>}
-      <form className="menu" onSubmit={submit}>
+      <Logo small />
+      <form className="panel join-panel" onSubmit={submit}>
+        <h2>Join room {code}</h2>
+        {info && (
+          <div className="match-line">
+            <span>{info.rounds > 1 ? `${info.rounds}-round tournament` : "Single match"}</span>
+            <RoundMaps maps={info.maps} />
+          </div>
+        )}
+        {info?.phase === "playing" && <p className="hint">A match is on: you'll join your team straight away.</p>}
         <PlayerFields setup={setup} players={info?.players ?? []} />
-        <button type="submit" className="button" disabled={busy || full}>
+        <button type="submit" className={`button big ${setup.team}`} disabled={busy || full}>
           {full ? "Room is full" : busy ? "Joining…" : `Join ${setup.team === "red" ? "Red" : "Blue"}`}
         </button>
         {error && <p className="error">{error}</p>}

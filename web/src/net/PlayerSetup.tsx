@@ -50,7 +50,7 @@ export function PlayerFields({ setup, players }: { setup: ReturnType<typeof useP
   return (
     <>
       <label className="field">
-        <span>Your name</span>
+        <span className="field-label">Your name</span>
         <input
           value={setup.name}
           maxLength={MAX_NAME_LENGTH}
@@ -60,7 +60,7 @@ export function PlayerFields({ setup, players }: { setup: ReturnType<typeof useP
         />
       </label>
       <div className="field">
-        <span>Team</span>
+        <span className="field-label">Team</span>
         <div className="team-pick" role="radiogroup" aria-label="Team">
           {(["red", "blue"] as const).map((t) => (
             <button
@@ -71,7 +71,7 @@ export function PlayerFields({ setup, players }: { setup: ReturnType<typeof useP
               className={`team-option ${t}`}
               onClick={() => setup.setTeam(t)}
             >
-              {t === "red" ? "Red" : "Blue"}
+              <span className="team-name">{t === "red" ? "Red" : "Blue"}</span>
               {players && <TeamList players={players.filter((p) => p.team === t)} />}
             </button>
           ))}

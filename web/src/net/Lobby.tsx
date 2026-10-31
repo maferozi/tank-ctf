@@ -2,7 +2,7 @@
 
 import { canStart, type Roster, type Team } from "@tank/shared";
 import { RoundMaps } from "./MapPicker";
-import { RoomChip } from "./RoomChip";
+import { RoomCode } from "./RoomChip";
 import type { Session } from "./session";
 
 const TEAM_NAME: Record<Team, string> = { red: "Red", blue: "Blue" };
@@ -19,10 +19,11 @@ export function Lobby({ session, roster, code, onLeave }: { session: Session; ro
 
   return (
     <main className="home lobby">
-      <h1>Room {code}</h1>
-      <RoomChip code={code} players={roster.players.length} />
-      <p>{roster.rounds > 1 ? `Tournament · ${roster.rounds} rounds` : "Single match"}</p>
-      <RoundMaps maps={roster.maps} />
+      <RoomCode code={code} />
+      <section className="panel match-info">
+        <h2>{roster.rounds > 1 ? `${roster.rounds}-round tournament` : "Single match"}</h2>
+        <RoundMaps maps={roster.maps} />
+      </section>
 
       <div className="lobby-teams">
         {(["red", "blue"] as const).map((team) => {
@@ -30,16 +31,20 @@ export function Lobby({ session, roster, code, onLeave }: { session: Session; ro
           return (
             <section key={team} className={`lobby-team ${team}`}>
               <h2>
-                {TEAM_NAME[team]} <span className="team-count">{players.length}</span>
+                {TEAM_NAME[team]} team <span className="team-count">{players.length}</span>
               </h2>
               <ul>
                 {players.map((p) => (
                   <li key={p.id} className={p.id === me ? "me" : undefined}>
                     <span className="lobby-name">
-                      {p.id === roster.hostId && <span title="Host">★ </span>}
+                      {p.id === roster.hostId && (
+                        <span className="host-star" title="Host">
+                          ★
+                        </span>
+                      )}
                       {p.name}
-                      {p.id === me && " (you)"}
-                      {p.away && <span className="away"> · away</span>}
+                      {p.id === me && <span className="you">you</span>}
+                      {p.away && <span className="away">away</span>}
                     </span>
                     {isHost && p.id !== me && (
                       <button type="button" className="move" onClick={() => session.movePlayer(p.id, other(team))}>
@@ -48,10 +53,10 @@ export function Lobby({ session, roster, code, onLeave }: { session: Session; ro
                     )}
                   </li>
                 ))}
-                {players.length === 0 && <li className="empty">No one yet</li>}
+                {players.length === 0 && <li className="empty">Waiting for players</li>}
               </ul>
               {myTeam !== team && (
-                <button type="button" className="button secondary" onClick={() => session.setTeam(team)}>
+                <button type="button" className={`button small ${team}`} onClick={() => session.setTeam(team)}>
                   Join {TEAM_NAME[team]}
                 </button>
               )}
@@ -60,9 +65,9 @@ export function Lobby({ session, roster, code, onLeave }: { session: Session; ro
         })}
       </div>
 
-      <div className="menu">
+      <div className="lobby-actions">
         {isHost ? (
-          <button type="button" className="button" disabled={!ready} onClick={() => session.start()}>
+          <button type="button" className="button big" disabled={!ready} onClick={() => session.start()}>
             {ready ? "Start match" : "Needs a player on each team"}
           </button>
         ) : (

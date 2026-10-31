@@ -7,17 +7,20 @@ import { BASE_RADIUS, TILE, type Flag, type GameMap, type MapTheme, type Team, t
 interface Palette {
   floor: string;
   floorAlt: string; // second floor colour (planks, checker tiles, grass blades)
-  wall: string;
-  wallTop: string; // lighter strip on top faces
+  wall: string; // front face of a wall block (the side facing down the screen)
+  wallTop: string; // top face
   wallEdge: string; // outline where a wall meets the floor
 }
 
+// Walls are drawn as raised blocks: a top face, a darker front face, an ink outline.
+const INK = "#1c2546";
 const PALETTES: Record<MapTheme, Palette> = {
-  arena: { floor: "#e6eaf0", floorAlt: "#dce2ea", wall: "#5a6376", wallTop: "#717c91", wallEdge: "#434a59" },
-  wood: { floor: "#d9a066", floorAlt: "#c98f57", wall: "#4b505d", wallTop: "#626979", wallEdge: "#b97b3e" },
-  grass: { floor: "#6bbb5d", floorAlt: "#5fae52", wall: "#4b505d", wallTop: "#626979", wallEdge: "#c48a4b" },
-  tiles: { floor: "#bad7db", floorAlt: "#aacdd2", wall: "#4b505d", wallTop: "#626979", wallEdge: "#e8762c" },
+  arena: { floor: "#f3e7cc", floorAlt: "#eadab8", wall: "#2c7a70", wallTop: "#4fb3a4", wallEdge: INK },
+  wood: { floor: "#d9a066", floorAlt: "#c98f57", wall: "#454b63", wallTop: "#737c9c", wallEdge: INK },
+  grass: { floor: "#6bbb5d", floorAlt: "#5fae52", wall: "#5b4a3e", wallTop: "#a3876f", wallEdge: INK },
+  tiles: { floor: "#bad7db", floorAlt: "#aacdd2", wall: "#7a3f2a", wallTop: "#e2774a", wallEdge: INK },
 };
+const WALL_FRONT = 9; // height of the front face, in map pixels
 
 const WOOD = { floor: "#d39a5e", seam: "rgba(110, 60, 20, 0.22)" };
 const WATER = { fill: "#9ed3e4", wave: "rgba(255, 255, 255, 0.55)", edge: "#7fbcd0" };
@@ -152,13 +155,21 @@ function paintWater(ctx: CanvasRenderingContext2D, map: GameMap, c: number, r: n
 function paintWall(ctx: CanvasRenderingContext2D, map: GameMap, pal: Palette, c: number, r: number): void {
   const x = c * TILE;
   const y = r * TILE;
-  ctx.fillStyle = pal.wall;
+  ctx.fillStyle = pal.wallTop;
   ctx.fillRect(x, y, TILE, TILE);
-  if (kindAt(map, c, r - 1) !== "wall") {
-    ctx.fillStyle = pal.wallTop;
-    ctx.fillRect(x, y, TILE, 5);
+  const below = kindAt(map, c, r + 1);
+  if (below !== "wall" && below !== "outside") {
+    ctx.fillStyle = pal.wall;
+    ctx.fillRect(x, y + TILE - WALL_FRONT, TILE, WALL_FRONT);
+    // Soft shadow the block casts on the floor below.
+    ctx.fillStyle = "rgba(28, 37, 70, 0.16)";
+    ctx.fillRect(x, y + TILE, TILE, 6);
   }
-  edges(ctx, map, c, r, (k) => k !== "wall" && k !== "outside", pal.wallEdge, 3);
+  if (kindAt(map, c, r - 1) !== "wall") {
+    ctx.fillStyle = "rgba(255, 255, 255, 0.25)";
+    ctx.fillRect(x, y, TILE, 4);
+  }
+  edges(ctx, map, c, r, (k) => k !== "wall" && k !== "outside", pal.wallEdge, 2.5);
 }
 
 // A desk: green top with a rim, and a white strip (paper) along its bottom edge.

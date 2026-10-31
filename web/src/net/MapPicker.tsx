@@ -53,7 +53,7 @@ export function MapPicker({ maps, onChange }: { maps: string[]; onChange: (maps:
 
   return (
     <div className="field">
-      <span>{rounds === 1 ? "Map" : `Maps for each round — round ${active + 1} selected`}</span>
+      <span className="field-label">{rounds === 1 ? "Map" : `Map for round ${active + 1}`}</span>
       {rounds > 1 && (
         <div className="round-slots" role="radiogroup" aria-label="Round">
           {maps.map((id, i) => (
@@ -69,7 +69,7 @@ export function MapPicker({ maps, onChange }: { maps: string[]; onChange: (maps:
         {MAPS.map((m) => (
           <button key={m.id} type="button" role="radio" aria-checked={maps[active] === m.id} className="map-card" onClick={() => pick(m.id)}>
             <MapPreview map={m} width={150} />
-            <span>{m.name}</span>
+            <span className="map-name">{m.name}</span>
           </button>
         ))}
       </div>

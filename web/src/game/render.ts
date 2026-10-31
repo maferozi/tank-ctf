@@ -122,6 +122,18 @@ export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
 // A still picture of a map for the map picker: walls, spawns, bases with flags, crates
 // and power boxes, as they are at the start of a round. Call with the context already
 // scaled so that map pixels fit the canvas.
+const INK = "#1c2546"; // outline colour shared with the page (--ink)
+
+// The page's fonts (set by next/font in layout.tsx), read once from the CSS variables.
+const fontFamilies: Record<string, string> = {};
+function font(size: number, kind: "display" | "body" = "display", weight = 400): string {
+  if (!(kind in fontFamilies) && typeof document !== "undefined") {
+    fontFamilies[kind] = getComputedStyle(document.documentElement).getPropertyValue(`--font-${kind}`).trim();
+  }
+  const family = fontFamilies[kind] ? `${fontFamilies[kind]}, ` : "";
+  return `${weight} ${size}px ${family}system-ui, sans-serif`;
+}
+
 export function drawMapPreview(ctx: CanvasRenderingContext2D, map: GameMap): void {
   drawMapLayer(ctx, map);
   for (const flag of createFlags(map)) {
@@ -137,7 +149,7 @@ function drawScoreboard(ctx: CanvasRenderingContext2D, map: GameMap, match: Matc
   const y = TILE / 2;
   const cx = map.width / 2;
   ctx.textBaseline = "middle";
-  ctx.font = "700 15px system-ui, sans-serif";
+  ctx.font = font(17);
   ctx.textAlign = "right";
   ctx.fillStyle = COLORS.red.body;
   ctx.fillText(`RED ${match.scores.red}`, cx - 14, y);
@@ -148,8 +160,8 @@ function drawScoreboard(ctx: CanvasRenderingContext2D, map: GameMap, match: Matc
   ctx.fillStyle = COLORS.blue.body;
   ctx.fillText(`${match.scores.blue} BLUE`, cx + 14, y);
   ctx.textAlign = "right";
-  ctx.font = "600 12px system-ui, sans-serif";
-  ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
+  ctx.font = font(13);
+  ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
   const round = Math.min(match.round, match.rounds);
   ctx.fillText(`ROUND ${round}/${match.rounds} · ${getMap(match.maps[round - 1] ?? "").name.toUpperCase()}`, cx - 110, y);
 }
@@ -222,20 +234,27 @@ function drawWinBanner(ctx: CanvasRenderingContext2D, map: GameMap, winner: Team
     : finished
       ? `Final score ${score} · New tournament in ${seconds}`
       : `${score} · Round ${match.round + 1} on ${getMap(match.maps[match.round] ?? "").name} in ${seconds}`;
-  ctx.fillStyle = "rgba(10, 12, 16, 0.55)";
+  ctx.fillStyle = "rgba(28, 37, 70, 0.5)";
   ctx.fillRect(0, 0, map.width, map.height);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  // Long tournament headlines get a smaller font so they fit the map width.
-  ctx.font = `800 ${headline.length > 16 ? 52 : 72}px system-ui, sans-serif`;
-  ctx.lineWidth = 8;
-  ctx.strokeStyle = color.dark;
-  ctx.strokeText(headline, map.width / 2, map.height / 2 - 20);
+  ctx.lineJoin = "round";
+  const cx = map.width / 2;
+  const cy = map.height / 2 - 20;
+  // Cartoon headline: team colour, thick ink outline and a hard ink shadow underneath.
+  // Long tournament headlines get a smaller size so they fit the map width.
+  ctx.font = font(headline.length > 16 ? 60 : 88);
+  ctx.lineWidth = 16;
+  ctx.strokeStyle = INK;
+  ctx.strokeText(headline, cx, cy + 8);
+  ctx.strokeText(headline, cx, cy);
   ctx.fillStyle = color.body;
-  ctx.fillText(headline, map.width / 2, map.height / 2 - 20);
-  ctx.font = "600 22px system-ui, sans-serif";
-  ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
-  ctx.fillText(subline, map.width / 2, map.height / 2 + 40);
+  ctx.fillText(headline, cx, cy);
+  ctx.font = font(24);
+  ctx.lineWidth = 7;
+  ctx.strokeText(subline, cx, map.height / 2 + 50);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(subline, cx, map.height / 2 + 50);
 }
 
 
@@ -280,7 +299,7 @@ function drawPowerBox(ctx: CanvasRenderingContext2D, box: PowerBox, nowMs: numbe
   ctx.lineWidth = 2;
   ctx.strokeRect(box.x - h + 1, box.y - h + 1, POWER_BOX_SIZE - 2, POWER_BOX_SIZE - 2);
   ctx.fillStyle = "#ffffff";
-  ctx.font = "bold 18px system-ui, sans-serif";
+  ctx.font = font(20);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText("?", box.x, box.y + 1);
@@ -542,14 +561,15 @@ export function drawFallenSoldier(ctx: CanvasRenderingContext2D, t: Tank, nowMs:
 
 // Small name above the soldier; yours in gold so you can find yourself.
 function drawNameTag(ctx: CanvasRenderingContext2D, name: string, isLocal: boolean): void {
-  ctx.font = "600 9px system-ui, sans-serif";
+  ctx.font = font(10, "body", 800);
   ctx.textAlign = "center";
   ctx.textBaseline = "bottom";
   const y = -TANK_RADIUS - 3;
+  ctx.lineJoin = "round";
   ctx.lineWidth = 3;
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.6)";
+  ctx.strokeStyle = INK;
   ctx.strokeText(name, 0, y);
-  ctx.fillStyle = isLocal ? "#ffd166" : "rgba(255, 255, 255, 0.85)";
+  ctx.fillStyle = isLocal ? "#ffc83a" : "#ffffff";
   ctx.fillText(name, 0, y);
 }
 
@@ -652,9 +672,13 @@ function drawEffects(ctx: CanvasRenderingContext2D, effects: Effect[], nowMs: nu
       const p = age / TEXT_MS;
       ctx.globalAlpha = 1 - p * p;
       ctx.fillStyle = e.color ?? "#ffffff";
-      ctx.font = "bold 14px system-ui, sans-serif";
+      ctx.font = font(16);
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = INK;
+      ctx.strokeText(e.label ?? "", e.x, e.y - TANK_RADIUS - 16 - p * 24);
       ctx.fillText(e.label ?? "", e.x, e.y - TANK_RADIUS - 16 - p * 24);
       ctx.globalAlpha = 1;
     }
