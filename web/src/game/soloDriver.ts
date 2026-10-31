@@ -13,9 +13,9 @@ import type { Driver } from "./driver";
 
 const MAX_FRAME_MS = 250; // avoid a spiral of catch-up ticks after a tab switch
 
-// Solo practice: runs the sim in the browser against spinning blue targets.
-export function createSoloDriver(targets: number): Driver {
-  const map = DEFAULT_MAP;
+// Solo practice: runs the sim in the browser against spinning blue targets, on any map.
+export function createSoloDriver(targets: number, mapId = DEFAULT_MAP.id): Driver {
+  const map = getMap(mapId);
   const localId = "you";
   const state = createState(map);
   addTank(state, map, localId, "red");

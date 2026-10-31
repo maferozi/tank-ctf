@@ -3,10 +3,11 @@ import type { GameMap, Team } from "./map";
 import { winRound } from "./match";
 import type { GameState, Tank } from "./sim";
 
-// Capture the flag. Each team's flag stands at its base (its home). An enemy who touches
-// it carries it; if the carrier is shot the flag drops where they fell. A teammate who
-// touches their own dropped flag sends it home, and a flag left lying returns by itself
-// after FLAG_RETURN_MS. A carrier who reaches their own base wins the round.
+// Capture the flag. Each team's flag stands at its home. An enemy who touches it carries
+// it; if the carrier is shot the flag drops where they fell. A teammate who touches their
+// own dropped flag sends it home, and a flag left lying returns by itself after
+// FLAG_RETURN_MS. A carrier who reaches their own team's base wins the round: the team's
+// scoring pad on maps that have one, otherwise the team's flag stand.
 
 export interface Flag {
   team: Team; // whose flag it is
@@ -14,6 +15,8 @@ export interface Flag {
   y: number;
   homeX: number;
   homeY: number;
+  baseX: number; // where this team scores (its pad, or its flag stand)
+  baseY: number;
   carrier: string | null; // tank id
   atHome: boolean;
   returnMs: number; // while dropped: time until it goes home by itself
@@ -23,7 +26,21 @@ export function createFlags(map: GameMap): Flag[] {
   return (["red", "blue"] as const).flatMap((team) => {
     const stand = map.flags[team];
     if (!stand) return [];
-    return [{ team, x: stand.x, y: stand.y, homeX: stand.x, homeY: stand.y, carrier: null, atHome: true, returnMs: 0 }];
+    const base = map.bases[team] ?? stand;
+    return [
+      {
+        team,
+        x: stand.x,
+        y: stand.y,
+        homeX: stand.x,
+        homeY: stand.y,
+        baseX: base.x,
+        baseY: base.y,
+        carrier: null,
+        atHome: true,
+        returnMs: 0,
+      },
+    ];
   });
 }
 
@@ -67,7 +84,7 @@ export function tickFlags(state: GameState): void {
       flag.x = carrier.x;
       flag.y = carrier.y;
       const base = state.flags.find((f) => f.team === carrier.team);
-      if (base && (carrier.x - base.homeX) ** 2 + (carrier.y - base.homeY) ** 2 <= BASE_RADIUS * BASE_RADIUS) {
+      if (base && (carrier.x - base.baseX) ** 2 + (carrier.y - base.baseY) ** 2 <= BASE_RADIUS * BASE_RADIUS) {
         winRound(state, carrier.team);
         state.events.push({ type: "capture", team: carrier.team, tankId: carrier.id, x: carrier.x, y: carrier.y });
         return;

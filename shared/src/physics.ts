@@ -1,4 +1,4 @@
-import { boxHitsWall, circleHitsWall, type GameMap } from "./map";
+import { boxHitsSolid, circleHitsSolid, type GameMap } from "./map";
 
 // Anything that takes up space and can be pushed: tanks (circles) and crates (squares).
 export interface Body {
@@ -61,7 +61,8 @@ export function shove(body: Body, map: GameMap, dx: number, dy: number): number 
 }
 
 function hitsWall(body: Body, map: GameMap, x: number, y: number): boolean {
-  return body.shape === "circle" ? circleHitsWall(map, x, y, body.size) : boxHitsWall(map, x, y, body.size);
+  // Water blocks bodies on the ground; only bullets (checked elsewhere) fly over it.
+  return body.shape === "circle" ? circleHitsSolid(map, x, y, body.size) : boxHitsSolid(map, x, y, body.size);
 }
 
 export function contact(a: Body, b: Body): Contact | null {

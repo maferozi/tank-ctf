@@ -33,8 +33,8 @@ function capture(state: GameState, team: "red" | "blue") {
   const base = state.flags.find((f) => f.team === team)!;
   enemyFlag.carrier = carrier.id;
   enemyFlag.atHome = false;
-  carrier.x = base.homeX;
-  carrier.y = base.homeY;
+  carrier.x = base.baseX;
+  carrier.y = base.baseY;
   run(state, 1);
   assert.equal(state.winner, team);
 }

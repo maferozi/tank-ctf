@@ -14,8 +14,9 @@ and a shared TypeScript game simulation that runs on both the server and every p
   or it goes home by itself after 15 s.
 - **Single match or tournament.** One capture wins a single match. Tournaments have 5 or 7
   rounds, 2 points per round won, every round is played, and most points wins.
-- **4 maps, picked per round.** Arena, Crossfire, Fortress and Canyon, shown as preview cards
-  when creating a room. The new three are mirrored, so both sides are exactly fair.
+- **7 maps, picked per round.** Arena, Crossfire, Fortress, Canyon, Classroom (desks), Garden
+  (house and pool) and Crossroads, shown as preview cards when creating a room. All but Arena
+  are exactly symmetric. On Classroom, Garden and Crossroads you score on your team's pad.
 - **Physics.** Soldiers, crates, power boxes and fallen bodies have weight and push each other.
   Soldiers shot while walking slide forward as they fall. Bodies are cover for their own team.
 - **Power-ups.** Purple "?" boxes give a shield, a speed boost or a flare (4-way bursts), one at
@@ -50,7 +51,7 @@ Both must be running to play online.
 |---|---|
 | `/` | Pick a name, team, match type and maps; create a room or join one by code. |
 | `/room/CODE` | A room. Share this link: it shows the match type, maps and teams, then joins the lobby. |
-| `/play` | Solo practice against spinning targets. |
+| `/play` | Solo practice against spinning targets. `/play?map=garden` practises on a given map. |
 | `/dev/sprites` | Dev only: the art drawn large, for reviewing graphics. |
 
 ### Playing with friends on the same Wi-Fi

@@ -1,5 +1,5 @@
+import { drawBase, drawMapLayer } from "./mapArt";
 import {
-  BASE_RADIUS,
   BULLET_FADE,
   BULLET_RADIUS,
   CRATE_SIZE,
@@ -16,7 +16,6 @@ import {
   TANK_RADIUS,
   TILE,
   getMap,
-  isWallAt,
   type Flag,
   type GameMap,
   type GameState,
@@ -28,8 +27,8 @@ import {
 } from "@tank/shared";
 
 const COLORS: Record<Team, { body: string; dark: string; zone: string }> = {
-  red: { body: "#ff5a5f", dark: "#a8262b", zone: "rgba(255, 90, 95, 0.10)" },
-  blue: { body: "#3fa7ff", dark: "#1a5f9e", zone: "rgba(63, 167, 255, 0.10)" },
+  red: { body: "#e5484d", dark: "#a8262b", zone: "rgba(229, 72, 77, 0.14)" },
+  blue: { body: "#2f80ed", dark: "#1a5aa8", zone: "rgba(47, 128, 237, 0.14)" },
 };
 
 export const POWER_STYLE: Record<PowerKind, { color: string; label: string }> = {
@@ -60,11 +59,7 @@ export interface RenderInput {
 
 export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
   const map = getMap(r.curr.mapId); // the round's map; all maps share one size
-  ctx.fillStyle = "#1b1e26";
-  ctx.fillRect(0, 0, map.width, map.height);
-  drawSpawnZones(ctx, map);
-  drawGrid(ctx, map);
-  drawWalls(ctx, map);
+  drawMapLayer(ctx, map);
   for (const flag of r.curr.flags) drawBase(ctx, flag);
 
   const prevCrates = new Map(r.prev.crates.map((c) => [c.id, c]));
@@ -128,10 +123,7 @@ export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
 // and power boxes, as they are at the start of a round. Call with the context already
 // scaled so that map pixels fit the canvas.
 export function drawMapPreview(ctx: CanvasRenderingContext2D, map: GameMap): void {
-  ctx.fillStyle = "#1b1e26";
-  ctx.fillRect(0, 0, map.width, map.height);
-  drawSpawnZones(ctx, map);
-  drawWalls(ctx, map);
+  drawMapLayer(ctx, map);
   for (const flag of createFlags(map)) {
     drawBase(ctx, flag);
     drawFlagShape(ctx, flag.team, flag.x, flag.y, 1.3, 0);
@@ -162,26 +154,6 @@ function drawScoreboard(ctx: CanvasRenderingContext2D, map: GameMap, match: Matc
   ctx.fillText(`ROUND ${round}/${match.rounds} · ${getMap(match.maps[round - 1] ?? "").name.toUpperCase()}`, cx - 110, y);
 }
 
-// Base: a ring in the team colour around the flag stand. Carry the enemy flag in here.
-function drawBase(ctx: CanvasRenderingContext2D, flag: Flag): void {
-  const color = COLORS[flag.team];
-  ctx.fillStyle = color.zone;
-  ctx.strokeStyle = color.body;
-  ctx.globalAlpha = 0.55;
-  ctx.lineWidth = 2;
-  ctx.setLineDash([6, 5]);
-  ctx.beginPath();
-  ctx.arc(flag.homeX, flag.homeY, BASE_RADIUS, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.globalAlpha = 1;
-  // The stand itself (visible when the flag is away).
-  ctx.fillStyle = color.dark;
-  ctx.beginPath();
-  ctx.arc(flag.homeX, flag.homeY, 4, 0, Math.PI * 2);
-  ctx.fill();
-}
 
 // A flag planted at (x, y): pole with a waving cloth. A dropped flag shows a ring that
 // empties as its automatic return gets closer.
@@ -266,43 +238,8 @@ function drawWinBanner(ctx: CanvasRenderingContext2D, map: GameMap, winner: Team
   ctx.fillText(subline, map.width / 2, map.height / 2 + 40);
 }
 
-function drawSpawnZones(ctx: CanvasRenderingContext2D, map: GameMap): void {
-  for (const team of ["red", "blue"] as const) {
-    ctx.fillStyle = COLORS[team].zone;
-    for (const s of map.spawns[team]) {
-      ctx.fillRect(s.x - TILE / 2, s.y - TILE / 2, TILE, TILE);
-    }
-  }
-}
 
-function drawGrid(ctx: CanvasRenderingContext2D, map: GameMap): void {
-  ctx.strokeStyle = "rgba(255, 255, 255, 0.03)";
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let c = 1; c < map.cols; c++) {
-    ctx.moveTo(c * TILE, 0);
-    ctx.lineTo(c * TILE, map.height);
-  }
-  for (let r = 1; r < map.rows; r++) {
-    ctx.moveTo(0, r * TILE);
-    ctx.lineTo(map.width, r * TILE);
-  }
-  ctx.stroke();
-}
 
-function drawWalls(ctx: CanvasRenderingContext2D, map: GameMap): void {
-  for (let r = 0; r < map.rows; r++) {
-    for (let c = 0; c < map.cols; c++) {
-      if (!isWallAt(map, c, r)) continue;
-      const x = c * TILE;
-      const y = r * TILE;
-      ctx.fillStyle = "#3a4152";
-      ctx.fillRect(x, y, TILE, TILE);
-      ctx.fillStyle = "#4a5368";
-      ctx.fillRect(x, y, TILE, 4);
-    }
-  }
-}
 
 function drawCrate(ctx: CanvasRenderingContext2D, x: number, y: number): void {
   const h = CRATE_SIZE / 2;
@@ -402,7 +339,7 @@ function drawPowerBars(ctx: CanvasRenderingContext2D, t: Tank): void {
   let y = -TANK_RADIUS - 17; // above the name tag
   for (const [kind, left] of bars) {
     if (left <= 0) continue;
-    ctx.fillStyle = "rgba(255, 255, 255, 0.15)";
+    ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
     ctx.fillRect(-14, y, 28, 3);
     ctx.fillStyle = POWER_STYLE[kind].color;
     ctx.fillRect(-14, y, 28 * left, 3);
@@ -411,7 +348,7 @@ function drawPowerBars(ctx: CanvasRenderingContext2D, t: Tank): void {
 }
 
 const SKIN = "#e8b48a";
-const GUN = "#9aa3b2"; // light gunmetal so the rifle reads against the dark floor
+const GUN = "#5b6474"; // gunmetal: reads against light floors
 const GUN_EDGE = "#1d2028";
 
 // Top-down soldier facing +x, holding a rifle along the facing direction, so shots
@@ -637,7 +574,7 @@ export function drawBullet(ctx: CanvasRenderingContext2D, x: number, y: number, 
   ctx.lineTo(-BULLET_LENGTH / 2, w * 0.7);
   ctx.closePath();
   ctx.fill();
-  ctx.fillStyle = "#fff4c2";
+  ctx.fillStyle = "#2b2f38";
   ctx.beginPath();
   ctx.roundRect(-BULLET_LENGTH / 2, -w * 0.6, BULLET_LENGTH, w * 1.2, w * 0.6);
   ctx.fill();
@@ -651,13 +588,13 @@ function drawAmmo(ctx: CanvasRenderingContext2D, t: Tank): void {
   const x0 = -((MAX_AMMO - 1) * gap) / 2;
   for (let i = 0; i < MAX_AMMO; i++) {
     const x = x0 + i * gap;
-    ctx.fillStyle = "rgba(255, 255, 255, 0.15)";
+    ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
     ctx.beginPath();
     ctx.arc(x, y, 2.2, 0, Math.PI * 2);
     ctx.fill();
     const fill = i < t.ammo ? 1 : i === t.ammo ? t.reloadMs / RELOAD_MS : 0;
     if (fill <= 0) continue;
-    ctx.fillStyle = fill >= 1 ? "#ffd166" : "rgba(255, 209, 102, 0.6)";
+    ctx.fillStyle = fill >= 1 ? "#e0a100" : "rgba(224, 161, 0, 0.6)";
     ctx.beginPath();
     ctx.arc(x, y, 2.2 * fill, 0, Math.PI * 2);
     ctx.fill();
@@ -697,7 +634,7 @@ function drawEffects(ctx: CanvasRenderingContext2D, effects: Effect[], nowMs: nu
       ctx.globalAlpha = 1;
     } else if (e.kind === "puff" && age < PUFF_MS) {
       const p = age / PUFF_MS;
-      ctx.fillStyle = `rgba(255, 244, 194, ${0.35 * (1 - p)})`;
+      ctx.fillStyle = `rgba(60, 64, 75, ${0.3 * (1 - p)})`;
       ctx.beginPath();
       ctx.arc(e.x, e.y, BULLET_RADIUS + p * 6, 0, Math.PI * 2);
       ctx.fill();

@@ -6,9 +6,12 @@ import {
   CARRIER_SPEED,
   DRIVE_SPEED,
   FLAG_RETURN_MS,
+  TANK_RADIUS,
   TICK_MS,
+  TILE,
 } from "./constants";
 import { DEFAULT_MAP } from "./map";
+import { getMap } from "./maps";
 import { addTank, createState, step, type GameEvent, type GameState, type TankInput } from "./sim";
 
 const map = DEFAULT_MAP;
@@ -219,4 +222,51 @@ test("a sliding body stops at a wall", () => {
   run(state, 30);
   assert.ok(t.x >= 40 + 14 - 1e-6, "body went into the wall");
   assert.equal(t.vx, 0);
+});
+
+// Maps with scoring pads (Classroom, Garden, Crossroads)
+test("on maps with pads, a carrier scores on the pad, not at the flag stand", () => {
+  const classroom = getMap("classroom");
+  const state = createState(classroom);
+  const red = addTank(state, classroom, "red1", "red");
+  addTank(state, classroom, "blue1", "blue");
+  const blueFlag = flagOf(state, "blue");
+  const redFlag = flagOf(state, "red");
+  assert.notDeepEqual([redFlag.baseX, redFlag.baseY], [redFlag.homeX, redFlag.homeY], "pad and stand differ");
+  blueFlag.carrier = red.id;
+  blueFlag.atHome = false;
+  red.x = redFlag.homeX; // at our own flag stand: not a score here
+  red.y = redFlag.homeY;
+  step(state, classroom, {}, config);
+  assert.equal(state.winner, null);
+  red.x = redFlag.baseX; // on our pad: score
+  red.y = redFlag.baseY;
+  step(state, classroom, {}, config);
+  assert.equal(state.winner, "red");
+});
+
+test("water blocks walking but bullets fly over it", () => {
+  const garden = getMap("garden");
+  // The pool spans tiles 8..19 on rows 1..3. Stand just left of it on row 2, walk right.
+  const state = createState(garden);
+  const walker = addTank(state, garden, "w", "red");
+  walker.x = 7 * TILE - TANK_RADIUS - 1; // left edge of the pool is x = 8 * TILE
+  walker.y = 2.5 * TILE;
+  walker.angle = 0;
+  for (let i = 0; i < 60; i++) step(state, garden, { w: hold }, config);
+  assert.ok(walker.x + TANK_RADIUS <= 8 * TILE + 1e-6, "walked into the water");
+
+  const shot = createState(garden);
+  const shooter = addTank(shot, garden, "s", "red");
+  const target = addTank(shot, garden, "t", "blue");
+  shooter.x = 7.5 * TILE;
+  shooter.y = 2.5 * TILE;
+  shooter.angle = 0;
+  step(shot, garden, { s: tap }, config);
+  for (let i = 0; i < 40 && target.alive; i++) {
+    target.x = 13 * TILE; // standing in for someone across the pool
+    target.y = 2.5 * TILE;
+    step(shot, garden, {}, config);
+  }
+  assert.equal(target.alive, false, "the bullet crossed the water");
 });

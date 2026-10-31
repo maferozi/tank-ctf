@@ -95,7 +95,8 @@ roll the same.
 ## Maps
 All maps are 28×18 tiles (40 px each), defined as text in `shared/src/maps.ts` (Arena is in
 `map.ts`). Legend: `#` wall, `.` floor, `R`/`B` red/blue spawn, `X` crate, `P` power box,
-`r`/`b` red/blue flag stand (base).
+`r`/`b` red/blue flag stand, `1`/`2` red/blue scoring pad, `T` desk (a wall), `~` water,
+`,` wood floor.
 
 | Map | Layout |
 |---|---|
@@ -103,10 +104,20 @@ All maps are 28×18 tiles (40 px each), defined as text in `shared/src/maps.ts` 
 | Crossfire | Open middle with cover blocks; each base in a U of walls opening towards its spawns. |
 | Fortress | Walled-in bases with narrow doors; crates near the doors can be pushed in as barricades. |
 | Canyon | Three long lanes split by walls, joined in the middle and at the ends. |
+| Classroom | Wooden floor, a 5 × 5 grid of desks (centre one missing). Flags on the left and right edges; scoring pads in opposite corners behind a short wall. |
+| Garden | Grass, a house with one wooden room per team and doors in its outer walls, a pool along the top. Pads in the top corners. |
+| Crossroads | Light tiles, plus-shaped walls, notches along the edges, a centre block. Each team's flag and pad in opposite corners. |
 
-Crossfire, Fortress and Canyon are drawn as Red's half and mirrored for Blue, so they are
-exactly fair. `shared/src/maps.test.ts` checks every map: right size, nothing inside walls,
-and every spawn can reach both flags and every power box.
+Classroom, Garden and Crossroads recreate the layouts of the original app's capture-the-flag
+maps in our own art. On them each team **scores on its square pad**, not at its own flag stand
+(on the other maps the pad sits under the flag stand). **Water** blocks walking and sliding
+bodies, but bullets fly over it.
+
+Practice any map solo with `/play?map=<id>` (e.g. `/play?map=garden`).
+
+Every map except Arena is exactly fair: Blue's side is Red's mirrored (Crossfire, Fortress,
+Canyon, Garden) or rotated half a turn (Classroom, Crossroads). `shared/src/maps.test.ts` checks every map: right size, nothing inside walls or water, every
+spawn can reach both flags, both scoring spots and every power box, and the symmetry.
 
 When creating a room you pick a map for each round (tap a round, then a map; tapping maps in
 order fills the rounds in order). Rounds you don't change cycle through the maps. The join page
