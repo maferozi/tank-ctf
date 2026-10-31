@@ -10,10 +10,12 @@ import {
   RELOAD_MS,
   FLAG_RETURN_MS,
   RESPAWN_MS,
+  createFlags,
   SHIELD_MS,
   SPEED_MS,
   TANK_RADIUS,
   TILE,
+  getMap,
   isWallAt,
   type Flag,
   type GameMap,
@@ -47,7 +49,6 @@ export interface Effect {
 }
 
 export interface RenderInput {
-  map: GameMap;
   prev: GameState;
   curr: GameState;
   alpha: number; // 0..1 between prev and curr
@@ -58,7 +59,7 @@ export interface RenderInput {
 }
 
 export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
-  const { map } = r;
+  const map = getMap(r.curr.mapId); // the round's map; all maps share one size
   ctx.fillStyle = "#1b1e26";
   ctx.fillRect(0, 0, map.width, map.height);
   drawSpawnZones(ctx, map);
@@ -123,6 +124,22 @@ export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
   if (r.curr.winner) drawWinBanner(ctx, map, r.curr.winner, r.curr.overMs, r.curr.match);
 }
 
+// A still picture of a map for the map picker: walls, spawns, bases with flags, crates
+// and power boxes, as they are at the start of a round. Call with the context already
+// scaled so that map pixels fit the canvas.
+export function drawMapPreview(ctx: CanvasRenderingContext2D, map: GameMap): void {
+  ctx.fillStyle = "#1b1e26";
+  ctx.fillRect(0, 0, map.width, map.height);
+  drawSpawnZones(ctx, map);
+  drawWalls(ctx, map);
+  for (const flag of createFlags(map)) {
+    drawBase(ctx, flag);
+    drawFlagShape(ctx, flag.team, flag.x, flag.y, 1.3, 0);
+  }
+  for (const c of map.crates) drawCrate(ctx, c.x, c.y);
+  map.powerBoxes.forEach((p, i) => drawPowerBox(ctx, { id: i, x: p.x, y: p.y, homeX: p.x, homeY: p.y, respawnMs: 0, pushMs: 0 }, 0));
+}
+
 // Tournaments only: round and points, drawn on the top wall, outside the play area.
 function drawScoreboard(ctx: CanvasRenderingContext2D, map: GameMap, match: Match): void {
   const y = TILE / 2;
@@ -141,7 +158,8 @@ function drawScoreboard(ctx: CanvasRenderingContext2D, map: GameMap, match: Matc
   ctx.textAlign = "right";
   ctx.font = "600 12px system-ui, sans-serif";
   ctx.fillStyle = "rgba(255, 255, 255, 0.6)";
-  ctx.fillText(`ROUND ${Math.min(match.round, match.rounds)}/${match.rounds}`, cx - 110, y);
+  const round = Math.min(match.round, match.rounds);
+  ctx.fillText(`ROUND ${round}/${match.rounds} · ${getMap(match.maps[round - 1] ?? "").name.toUpperCase()}`, cx - 110, y);
 }
 
 // Base: a ring in the team colour around the flag stand. Carry the enemy flag in here.
@@ -231,7 +249,7 @@ function drawWinBanner(ctx: CanvasRenderingContext2D, map: GameMap, winner: Team
     ? `New match in ${seconds}`
     : finished
       ? `Final score ${score} · New tournament in ${seconds}`
-      : `${score} · Round ${match.round + 1} in ${seconds}`;
+      : `${score} · Round ${match.round + 1} on ${getMap(match.maps[match.round] ?? "").name} in ${seconds}`;
   ctx.fillStyle = "rgba(10, 12, 16, 0.55)";
   ctx.fillRect(0, 0, map.width, map.height);
   ctx.textAlign = "center";

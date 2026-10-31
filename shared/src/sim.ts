@@ -32,6 +32,7 @@ import {
 } from "./constants";
 import { createFlags, dropFlagOf, isCarrying, tickFlags, type Flag } from "./flags";
 import { circleHitsWall, type GameMap, type Team } from "./map";
+import { getMap } from "./maps";
 import { advanceMatch, createMatch, type Match, type MatchRounds } from "./match";
 import { contact, resolveContacts, shove, type Body } from "./physics";
 
@@ -119,6 +120,7 @@ export interface GameState {
   winner: Team | null; // set when a flag is captured; the round is over
   overMs: number; // while over: time until the next round starts
   match: Match; // single match or tournament: round number, points, champion
+  mapId: string; // the map this round is played on; look it up with getMap()
   rng: number; // seed for power-up rolls, so server and clients roll the same
   nextBulletId: number;
   events: GameEvent[]; // events produced by the last step only
@@ -136,9 +138,9 @@ export interface SimConfig {
 }
 
 // Pass the map to place its crates, power boxes and flags; without one the arena starts
-// empty (handy in tests). `rounds` picks the match type: 1 = single match, 5 or 7 = a
-// tournament.
-export function createState(map?: GameMap, rounds: MatchRounds = 1): GameState {
+// empty (handy in tests). For real matches use createMatchState.
+export function createState(map?: GameMap, rounds: MatchRounds = 1, maps?: readonly unknown[]): GameState {
+  const match = createMatch(rounds, maps);
   return {
     tick: 0,
     tanks: [],
@@ -146,11 +148,19 @@ export function createState(map?: GameMap, rounds: MatchRounds = 1): GameState {
     ...mapObjects(map),
     winner: null,
     overMs: 0,
-    match: createMatch(rounds),
+    match,
+    mapId: map?.id ?? match.maps[0]!,
     rng: 0x2f6b1d3,
     nextBulletId: 1,
     events: [],
   };
+}
+
+// A match: `rounds` picks single match (1) or tournament (5 / 7), `maps` the map for each
+// round. The first round's map is set up.
+export function createMatchState(rounds: MatchRounds, maps?: readonly unknown[]): GameState {
+  const match = createMatch(rounds, maps);
+  return createState(getMap(match.maps[0]!), rounds, match.maps);
 }
 
 function mapObjects(map?: GameMap): Pick<GameState, "crates" | "powerBoxes" | "flags"> {
@@ -179,7 +189,8 @@ export function cloneState(s: GameState): GameState {
     flags: s.flags.map((f) => ({ ...f })),
     winner: s.winner,
     overMs: s.overMs,
-    match: { ...s.match, scores: { ...s.match.scores } },
+    match: { ...s.match, scores: { ...s.match.scores }, maps: [...s.match.maps] },
+    mapId: s.mapId,
     rng: s.rng,
     nextBulletId: s.nextBulletId,
     events: [...s.events],
@@ -252,7 +263,8 @@ export function step(
     state.overMs -= TICK_MS;
     if (state.overMs <= 1e-6) {
       advanceMatch(state);
-      resetRound(state, map);
+      // The next round may be on a different map: callers look the map up from mapId.
+      resetRound(state, getMap(state.match.maps[state.match.round - 1]!));
     }
     return;
   }
@@ -374,6 +386,7 @@ function killTank(state: GameState, t: Tank, bullet: Bullet): void {
 // powers, flags home, crates and power boxes back where the map puts them.
 export function resetRound(state: GameState, map: GameMap): void {
   Object.assign(state, mapObjects(map));
+  state.mapId = map.id;
   state.winner = null;
   state.overMs = 0;
   state.bullets = [];

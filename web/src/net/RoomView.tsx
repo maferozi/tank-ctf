@@ -1,10 +1,11 @@
 "use client";
 
-import { normalizeRoomCode, type RoomInfo } from "@tank/shared";
+import { getMap, normalizeRoomCode, type RoomInfo } from "@tank/shared";
 import Link from "next/link";
 import { useEffect, useReducer, useState, type FormEvent } from "react";
 import { GameScreen } from "@/game/GameScreen";
 import { createOnlineDriver } from "@/game/onlineDriver";
+import { MapPreview } from "./MapPicker";
 import { PlayerFields, usePlayerSetup } from "./PlayerSetup";
 import { fetchRoomInfo, joinRoom, releaseSession, sessionFor, type Session } from "./session";
 
@@ -106,6 +107,17 @@ function JoinForm({ code, onJoined }: { code: string; onJoined: (s: Session) => 
     <main className="home">
       <h1>Room {code}</h1>
       {info && <p>{info.rounds > 1 ? `Tournament · ${info.rounds} rounds` : "Single match"}</p>}
+      {info && (
+        <div className="round-slots join-maps" aria-label="Maps">
+          {info.maps.map((id, i) => (
+            <div key={i} className="round-slot">
+              {info.maps.length > 1 && <span className="round-label">R{i + 1}</span>}
+              <MapPreview map={getMap(id)} width={info.maps.length > 1 ? 52 : 150} />
+              <span className="round-map">{getMap(id).name}</span>
+            </div>
+          ))}
+        </div>
+      )}
       <form className="menu" onSubmit={submit}>
         <PlayerFields setup={setup} players={info?.players ?? []} />
         <button type="submit" className="button" disabled={busy || full}>

@@ -64,7 +64,7 @@ function playOverNetwork(pattern: (tick: number) => TankInput, ticks: number, up
   const server = createState(map);
   addTank(server, map, "me", "red");
   const queue = new InputQueue();
-  const predictor = new Predictor(map, "me", config);
+  const predictor = new Predictor("me", config);
   predictor.reconcile(cloneState(server), 0);
 
   const toServer: { at: number; frame: InputFrame }[] = [];

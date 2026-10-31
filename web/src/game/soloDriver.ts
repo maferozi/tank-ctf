@@ -5,6 +5,7 @@ import {
   addTank,
   cloneState,
   createState,
+  getMap,
   step,
   type GameEvent,
 } from "@tank/shared";
@@ -36,7 +37,7 @@ export function createSoloDriver(targets: number): Driver {
       const events: GameEvent[] = [];
       while (acc >= TICK_MS) {
         prev = cloneState(state);
-        step(state, map, { [localId]: button.consume() }, { holdMs: DEFAULT_HOLD_MS });
+        step(state, getMap(state.mapId), { [localId]: button.consume() }, { holdMs: DEFAULT_HOLD_MS });
         events.push(...state.events);
         acc -= TICK_MS;
       }

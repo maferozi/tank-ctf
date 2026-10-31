@@ -1,5 +1,6 @@
 import { MATCH_RESTART_MS, ROUND_POINTS, ROUND_RESTART_MS } from "./constants";
 import type { Team } from "./map";
+import { MAPS, isMapId } from "./maps";
 import type { GameState } from "./sim";
 
 // Match types, picked when a room is created:
@@ -12,13 +13,23 @@ export type MatchRounds = (typeof MATCH_ROUND_OPTIONS)[number];
 
 export interface Match {
   rounds: MatchRounds;
+  maps: string[]; // map id for each round, picked by the room creator
   round: number; // 1-based, the round being played
   scores: Record<Team, number>;
   champion: Team | null; // set when the last round is won
 }
 
-export function createMatch(rounds: MatchRounds = 1): Match {
-  return { rounds, round: 1, scores: { red: 0, blue: 0 }, champion: null };
+export function createMatch(rounds: MatchRounds = 1, maps?: readonly unknown[]): Match {
+  return { rounds, maps: roundMaps(rounds, maps), round: 1, scores: { red: 0, blue: 0 }, champion: null };
+}
+
+// One valid map per round. Anything missing or unknown is filled by cycling through all
+// maps, so a bad or partial pick never breaks a room.
+export function roundMaps(rounds: number, maps?: readonly unknown[]): string[] {
+  return Array.from({ length: rounds }, (_, i) => {
+    const pick = maps?.[i];
+    return isMapId(pick) ? pick : MAPS[i % MAPS.length]!.id;
+  });
 }
 
 export function isMatchRounds(value: unknown): value is MatchRounds {
@@ -45,6 +56,6 @@ export function winRound(state: GameState, team: Team): void {
 // When the banner is done: the next round, or a fresh match after the last one.
 export function advanceMatch(state: GameState): void {
   const match = state.match;
-  if (match.round >= match.rounds) state.match = createMatch(match.rounds);
+  if (match.round >= match.rounds) state.match = createMatch(match.rounds, match.maps);
   else match.round++;
 }

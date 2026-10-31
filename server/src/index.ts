@@ -1,5 +1,5 @@
 import { createEndpoint, createRouter, defineRoom, defineServer, listen, matchMaker } from "colyseus";
-import { MAX_PLAYERS, isMatchRounds, normalizeRoomCode, type RoomInfo, type RoomMetadata } from "@tank/shared";
+import { MAX_PLAYERS, isMatchRounds, normalizeRoomCode, roundMaps, type RoomInfo, type RoomMetadata } from "@tank/shared";
 import { GameRoom } from "./GameRoom";
 
 const PORT = Number(process.env.PORT ?? 2567);
@@ -16,7 +16,9 @@ const roomInfo = createEndpoint("/rooms/:code", { method: "GET" }, async (ctx) =
     players: metadata?.players ?? [],
     maxPlayers: room.maxClients ?? MAX_PLAYERS,
     rounds: isMatchRounds(metadata?.rounds) ? metadata.rounds : 1,
+    maps: [],
   };
+  info.maps = roundMaps(info.rounds, metadata?.maps);
   return ctx.json(info);
 });
 

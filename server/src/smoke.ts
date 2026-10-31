@@ -16,7 +16,9 @@ async function play(button: BotButton, ms: number) {
   }
 }
 
-const ann = await new Client(url).create(ROOM_NAME, { name: "Ann", team: "red", rounds: 5 });
+// Round 1 on the open Arena, so the walking check below doesn't start against a wall.
+const picks = ["arena", "fortress", "crossfire", "canyon", "canyon"];
+const ann = await new Client(url).create(ROOM_NAME, { name: "Ann", team: "red", rounds: 5, maps: picks });
 assert.match(ann.roomId, /^[A-Z]{4}$/, "room id should be a 4-letter code");
 const annRosters: Roster[] = [];
 ann.onMessage(MSG.roster, (r: Roster) => annRosters.push(r));
@@ -44,6 +46,8 @@ const info = (await infoRes.json()) as RoomInfo;
 assert.deepEqual(info.players.map((p) => `${p.name}:${p.team}`).sort(), ["Ann:red", "Bob:blue"]);
 assert.equal(info.rounds, 5, "room info shows the match type the creator picked");
 assert.equal(snaps.at(-1)!.state.match.rounds, 5, "the game runs a 5-round tournament");
+assert.deepEqual(info.maps, picks, "room info lists the map for each round");
+assert.equal(snaps.at(-1)!.state.mapId, "arena", "round 1 is played on the first pick");
 const missing = await fetch(`${http}/rooms/ZZZZ`);
 assert.equal(missing.status, 404);
 

@@ -1,4 +1,4 @@
-import type { GameMap } from "./map";
+import { getMap } from "./maps";
 import { cloneState, step, type GameEvent, type GameState, type SimConfig, type TankInput } from "./sim";
 
 // Client prediction. The client samples its button once per sim tick and numbers each
@@ -69,7 +69,6 @@ export class Predictor {
   private seq = 0;
 
   constructor(
-    private map: GameMap,
     private localId: string,
     private config: SimConfig,
   ) {}
@@ -107,6 +106,6 @@ export class Predictor {
   private advance(state: GameState, frame: InputFrame): void {
     const inputs: Record<string, TankInput> = {};
     for (const t of state.tanks) inputs[t.id] = t.id === this.localId ? frame : { held: t.held, pressed: false };
-    step(state, this.map, inputs, this.config);
+    step(state, getMap(state.mapId), inputs, this.config); // the map can change between rounds
   }
 }

@@ -24,9 +24,11 @@ export interface JoinOptions {
   team: Team;
 }
 
-// The room creator also picks the match type: 1 round = single match, 5 or 7 = tournament.
+// The room creator also picks the match type (1 round = single match, 5 or 7 = tournament)
+// and a map id for each round.
 export interface CreateOptions extends JoinOptions {
   rounds: MatchRounds;
+  maps: string[];
 }
 
 // Button samples, one per client sim tick, numbered so the server can ack them.
@@ -56,11 +58,13 @@ export interface RoomInfo {
   players: Player[];
   maxPlayers: number;
   rounds: MatchRounds;
+  maps: string[]; // map id per round
 }
 
 // What a room publishes in its listing metadata (read by GET /rooms/CODE).
 export interface RoomMetadata extends Roster {
   rounds: MatchRounds;
+  maps: string[];
 }
 
 // Room codes: 4 letters, no look-alikes (I/L/O/0/1), easy to read out loud.

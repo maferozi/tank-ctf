@@ -1,9 +1,10 @@
 "use client";
 
-import { normalizeRoomCode, type MatchRounds } from "@tank/shared";
+import { normalizeRoomCode, roundMaps, type MatchRounds } from "@tank/shared";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { MapPicker } from "./MapPicker";
 import { PlayerFields, usePlayerSetup } from "./PlayerSetup";
 import { createRoom } from "./session";
 
@@ -11,7 +12,13 @@ export function HomeMenu() {
   const router = useRouter();
   const setup = usePlayerSetup();
   const [code, setCode] = useState("");
-  const [rounds, setRounds] = useState<MatchRounds>(1);
+  const [rounds, setRoundCount] = useState<MatchRounds>(1);
+  const [maps, setMaps] = useState<string[]>(() => roundMaps(1));
+  // Changing the number of rounds keeps the maps already picked and fills the rest.
+  const setRounds = (r: MatchRounds) => {
+    setRoundCount(r);
+    setMaps((current) => roundMaps(r, current));
+  };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -19,7 +26,7 @@ export function HomeMenu() {
     setBusy(true);
     setError("");
     try {
-      const session = await createRoom({ name: setup.name, team: setup.team, rounds });
+      const session = await createRoom({ name: setup.name, team: setup.team, rounds, maps });
       router.push(`/room/${session.room.roomId}`);
     } catch {
       setError("Couldn't reach the game server. Is it running?");
@@ -44,6 +51,7 @@ export function HomeMenu() {
       <div className="menu">
         <PlayerFields setup={setup} />
         <MatchPicker rounds={rounds} onChange={setRounds} />
+        <MapPicker maps={maps} onChange={setMaps} />
         <button type="button" className="button" disabled={busy} onClick={create}>
           {busy ? "Creating…" : "Create room"}
         </button>

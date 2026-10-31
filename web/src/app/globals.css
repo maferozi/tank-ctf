@@ -337,3 +337,80 @@ a {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* Map picker: round slots and map cards. */
+.map-preview {
+  display: block;
+  border-radius: 6px;
+}
+
+.map-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.map-card,
+.round-slot {
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 2px solid #343a48;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.map-card {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.map-card[aria-checked="true"],
+.round-slot[aria-checked="true"] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.round-slots {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.round-slot {
+  flex: 0 0 auto;
+  padding: 4px;
+  gap: 2px;
+  font-size: 10px;
+}
+
+.round-label {
+  font-weight: 700;
+}
+
+.round-map {
+  max-width: 56px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Wider menu so two map cards fit side by side. */
+.menu {
+  width: min(100%, 360px);
+}
+
+.join-maps {
+  justify-content: center;
+  max-width: min(100%, 360px);
+}
+
+.join-maps .round-slot {
+  cursor: default;
+}

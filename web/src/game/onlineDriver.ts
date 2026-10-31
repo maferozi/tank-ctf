@@ -35,7 +35,7 @@ interface Timed {
 export function createOnlineDriver(session: Session): Driver {
   const { room } = session;
   const me = room.sessionId;
-  const predictor = new Predictor(DEFAULT_MAP, me, { holdMs: DEFAULT_HOLD_MS });
+  const predictor = new Predictor(me, { holdMs: DEFAULT_HOLD_MS });
   const snaps: Timed[] = [];
   let serverEvents: GameEvent[] = [];
   let clockOffset: number | null = null; // local time - server sim time, best (lowest) seen

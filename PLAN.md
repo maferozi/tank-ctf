@@ -55,7 +55,8 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
   auto-return, carrier at 0.8× speed, capture wins the round with a banner and a fresh round
   after 6 s. Bodies now slide with momentum when shot while walking. See `docs/GAMEPLAY.md`.
   Match types: single match (one capture wins) or a tournament of 5 or 7 rounds, 2 points per
-  round won, all rounds played, most points wins. Picked when creating a room.
+  round won, all rounds played, most points wins. Picked when creating a room, along with a
+  map for each round from 4 maps (Arena, Crossfire, Fortress, Canyon) shown as preview cards.
   Still open: a round timer, if wanted.
 
 ## Known gaps after phase 2
@@ -75,7 +76,7 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
 3. Lobby and teams: Red/Blue lists, host starts, teams lock, Leave button.
 4. Capture the flag: flags, bases, scoring, timer, win screen.
 5. Voice chat: LiveKit room per lobby, mute, speaking indicators.
-6. Maps and art: CTF maps, floor and prop art, sounds.
+6. Maps and art: more maps, floor and prop art, sounds. (4 maps exist; see docs/GAMEPLAY.md.)
 7. Deploy, playtest with friends, tune latency and feel.
 
 ## Cautions

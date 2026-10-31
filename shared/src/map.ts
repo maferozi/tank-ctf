@@ -9,6 +9,8 @@ export interface Spawn {
 }
 
 export interface GameMap {
+  id: string;
+  name: string;
   cols: number;
   rows: number;
   width: number;
@@ -43,7 +45,7 @@ const ARENA = [
   "############################",
 ];
 
-export function parseMap(rows: string[]): GameMap {
+export function parseMap(rows: readonly string[], id = "custom", name = "Custom"): GameMap {
   const cols = rows[0]?.length ?? 0;
   const walls: boolean[] = [];
   const spawns: Record<Team, Spawn[]> = { red: [], blue: [] };
@@ -66,10 +68,22 @@ export function parseMap(rows: string[]): GameMap {
       if (ch === "b") flags.blue = { x, y };
     }
   });
-  return { cols, rows: rows.length, width: cols * TILE, height: rows.length * TILE, walls, spawns, crates, powerBoxes, flags };
+  return {
+    id,
+    name,
+    cols,
+    rows: rows.length,
+    width: cols * TILE,
+    height: rows.length * TILE,
+    walls,
+    spawns,
+    crates,
+    powerBoxes,
+    flags,
+  };
 }
 
-export const DEFAULT_MAP = parseMap(ARENA);
+export const DEFAULT_MAP = parseMap(ARENA, "arena", "Arena");
 
 export function isWallAt(map: GameMap, col: number, row: number): boolean {
   if (col < 0 || row < 0 || col >= map.cols || row >= map.rows) return true;

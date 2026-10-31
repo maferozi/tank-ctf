@@ -6,3 +6,4 @@ export * from "./prediction";
 export * from "./sim";
 export * from "./flags";
 export * from "./match";
+export * from "./maps";

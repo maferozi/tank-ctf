@@ -92,7 +92,23 @@ on the pusher.
 Random rolls use a seeded generator stored in the game state, so the server and every client
 roll the same.
 
-## Map
-`shared/src/map.ts`, a 28×18 tile grid (40 px tiles). Legend: `#` wall, `.` floor,
-`R`/`B` red/blue spawn, `X` crate, `P` power box, `r`/`b` red/blue flag stand (base). The arena
-is still a placeholder; proper CTF maps come in the maps-and-art phase.
+## Maps
+All maps are 28×18 tiles (40 px each), defined as text in `shared/src/maps.ts` (Arena is in
+`map.ts`). Legend: `#` wall, `.` floor, `R`/`B` red/blue spawn, `X` crate, `P` power box,
+`r`/`b` red/blue flag stand (base).
+
+| Map | Layout |
+|---|---|
+| Arena | The original practice arena, bases on the left and right middle. |
+| Crossfire | Open middle with cover blocks; each base in a U of walls opening towards its spawns. |
+| Fortress | Walled-in bases with narrow doors; crates near the doors can be pushed in as barricades. |
+| Canyon | Three long lanes split by walls, joined in the middle and at the ends. |
+
+Crossfire, Fortress and Canyon are drawn as Red's half and mirrored for Blue, so they are
+exactly fair. `shared/src/maps.test.ts` checks every map: right size, nothing inside walls,
+and every spawn can reach both flags and every power box.
+
+When creating a room you pick a map for each round (tap a round, then a map; tapping maps in
+order fills the rounds in order). Rounds you don't change cycle through the maps. The join page
+shows each round's map, the scoreboard shows the current one, and the round banner names the
+next.

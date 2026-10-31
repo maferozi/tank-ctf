@@ -80,7 +80,7 @@ export function GameScreen({ makeDriver, children }: { makeDriver: () => Driver;
           if (e.type === "round") effects = [];
         }
         effects = pruneEffects(effects, now);
-        render(ctx, { map, ...frame, localId: driver.localId, names: driver.names, effects, nowMs: now });
+        render(ctx, { ...frame, localId: driver.localId, names: driver.names, effects, nowMs: now });
       }
     };
     raf = requestAnimationFrame(loop);

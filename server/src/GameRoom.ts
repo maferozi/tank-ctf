@@ -1,7 +1,6 @@
 import { Room, matchMaker, type Client } from "colyseus";
 import {
   DEFAULT_HOLD_MS,
-  DEFAULT_MAP,
   InputQueue,
   MAX_FRAMES_PER_MESSAGE,
   MAX_PLAYERS,
@@ -10,7 +9,8 @@ import {
   TICK_MS,
   addTank,
   cleanName,
-  createState,
+  createMatchState,
+  getMap,
   isMatchRounds,
   isTeam,
   makeRoomCode,
@@ -42,8 +42,7 @@ export class GameRoom extends Room {
   maxClients = MAX_PLAYERS;
   maxMessagesPerSecond = MAX_MESSAGES_PER_SECOND;
 
-  private map = DEFAULT_MAP;
-  private sim = createState(DEFAULT_MAP);
+  private sim = createMatchState(1);
   private queues = new Map<string, InputQueue>(); // per player: button samples, one per tick
   private players = new Map<string, Player>();
   private pendingEvents: GameEvent[] = [];
@@ -52,7 +51,10 @@ export class GameRoom extends Room {
 
   async onCreate(options: Partial<CreateOptions> = {}) {
     this.roomId = await this.freeRoomCode();
-    this.sim = createState(this.map, isMatchRounds(options.rounds) ? options.rounds : 1);
+    // Match type and a map per round, as picked by the room's creator (bad picks are
+    // replaced with valid ones inside createMatchState).
+    const rounds = isMatchRounds(options.rounds) ? options.rounds : 1;
+    this.sim = createMatchState(rounds, Array.isArray(options.maps) ? options.maps : undefined);
 
     this.onMessage(MSG.input, (client: Client, message: InputMessage) => {
       const queue = this.queues.get(client.sessionId);
@@ -71,7 +73,7 @@ export class GameRoom extends Room {
     const player: Player = { id: client.sessionId, name: cleanName(options.name), team };
     this.players.set(client.sessionId, player);
     this.queues.set(client.sessionId, new InputQueue());
-    addTank(this.sim, this.map, client.sessionId, team);
+    addTank(this.sim, getMap(this.sim.mapId), client.sessionId, team);
     this.sendRoster();
     console.log(`${player.name} (${team}) joined ${this.roomId}, ${this.players.size} player(s)`);
   }
@@ -117,7 +119,7 @@ export class GameRoom extends Room {
     const start = TICK_STATS ? performance.now() : 0;
     const inputs: Record<string, TankInput> = {};
     for (const [id, queue] of this.queues) inputs[id] = queue.next();
-    step(this.sim, this.map, inputs, { holdMs: DEFAULT_HOLD_MS });
+    step(this.sim, getMap(this.sim.mapId), inputs, { holdMs: DEFAULT_HOLD_MS });
     this.pendingEvents.push(...this.sim.events);
 
     if (this.sim.tick % SNAPSHOT_EVERY_TICKS === 0) {
@@ -144,7 +146,7 @@ export class GameRoom extends Room {
   private sendRoster() {
     const roster = this.roster();
     this.broadcast(MSG.roster, roster);
-    const metadata: RoomMetadata = { ...roster, rounds: this.sim.match.rounds };
+    const metadata: RoomMetadata = { ...roster, rounds: this.sim.match.rounds, maps: this.sim.match.maps };
     void this.setMetadata(metadata);
   }
 
