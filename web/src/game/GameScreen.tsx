@@ -57,6 +57,8 @@ export function GameScreen({ makeDriver, children }: { makeDriver: () => Driver;
 
     let raf = 0;
     const loop = (now: number) => {
+      // Schedule first, so one frame that throws can't stop the game.
+      raf = requestAnimationFrame(loop);
       const frame = driver.frame(now, button);
       if (padEl) padEl.dataset.pressed = String(button.held);
       if (frame) {
@@ -75,7 +77,6 @@ export function GameScreen({ makeDriver, children }: { makeDriver: () => Driver;
         effects = pruneEffects(effects, now);
         render(ctx, { map, ...frame, localId: driver.localId, names: driver.names, effects, nowMs: now });
       }
-      raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
 

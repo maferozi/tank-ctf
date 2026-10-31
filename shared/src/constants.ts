@@ -16,6 +16,7 @@ export const TANK_RADIUS = 14;
 // weights (a light pusher against a heavy body barely moves it).
 export const TANK_MASS = 1;
 export const IDLE_TANK_BRAKE = 2; // an idle tank has its brakes on: counts as 2x heavier
+export const BODY_MASS = 2; // a fallen soldier: solid and pushable until they respawn
 export const CRATE_SIZE = 32; // px, square
 export const CRATE_MASS = 3;
 // Crates "stick" at first: they start CRATE_STATIC times heavier and loosen up to

@@ -20,6 +20,9 @@ export function createOnlineDriver(session: Session): Driver {
   let pendingEvents: GameEvent[] = [];
   let clockOffset: number | null = null; // local time - server sim time, best (lowest) seen
   let sentHeld = false;
+  // Dev-only health numbers, readable as window.__net in the browser console.
+  const stats = { frames: 0, starved: 0, ahead: 0 };
+  if (process.env.NODE_ENV !== "production") (window as unknown as { __net?: unknown }).__net = stats;
 
   const unsubscribe = room.onMessage(MSG.snapshot, (snap: Snapshot) => {
     const serverMs = snap.state.tick * TICK_MS;
@@ -48,6 +51,9 @@ export function createOnlineDriver(session: Session): Driver {
 
       const t = now - clockOffset - INTERP_DELAY_MS;
       const next = snaps.findIndex((s) => s.serverMs > t);
+      stats.frames++;
+      if (next === -1) stats.starved++; // nothing newer to blend towards: motion would hitch
+      stats.ahead = next === -1 ? 0 : snaps.length - next; // snapshots buffered past the render time
       let prev: Timed;
       let curr: Timed;
       let alpha: number;

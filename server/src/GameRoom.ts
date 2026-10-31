@@ -23,6 +23,9 @@ import {
 } from "@tank/shared";
 
 const MAX_CATCH_UP_TICKS = 10; // after a stall, don't fast-forward more than this at once
+// TICK_STATS=1 logs how long ticks take (sim + snapshot), every STATS_EVERY_MS.
+const TICK_STATS = process.env.TICK_STATS === "1";
+const STATS_EVERY_MS = 5000;
 
 // One match. Runs the shared sim at 60 Hz with every player's button state and sends
 // snapshots to all players. The server is the only one who decides what happens.
@@ -35,6 +38,7 @@ export class GameRoom extends Room {
   private players = new Map<string, Player>();
   private pendingEvents: GameEvent[] = [];
   private accMs = 0;
+  private stats = { ticks: 0, totalMs: 0, maxMs: 0, catchUps: 0, since: performance.now() };
 
   async onCreate() {
     this.roomId = await this.freeRoomCode();
@@ -85,9 +89,25 @@ export class GameRoom extends Room {
       steps++;
     }
     if (steps === MAX_CATCH_UP_TICKS) this.accMs = 0;
+    if (steps > 1) this.stats.catchUps++;
+    if (TICK_STATS) this.logStats();
+  }
+
+  private logStats() {
+    const s = this.stats;
+    const now = performance.now();
+    if (now - s.since < STATS_EVERY_MS) return;
+    const rate = (s.ticks * 1000) / (now - s.since);
+    console.log(
+      `[${this.roomId}] ${this.players.size} players: ${rate.toFixed(1)} ticks/s, ` +
+        `tick avg ${(s.totalMs / Math.max(1, s.ticks)).toFixed(3)} ms, max ${s.maxMs.toFixed(3)} ms, ` +
+        `${s.catchUps} catch-ups`,
+    );
+    this.stats = { ticks: 0, totalMs: 0, maxMs: 0, catchUps: 0, since: now };
   }
 
   private tick() {
+    const start = TICK_STATS ? performance.now() : 0;
     step(this.sim, this.map, Object.fromEntries(this.buttons), { holdMs: DEFAULT_HOLD_MS });
     for (const input of this.buttons.values()) input.pressed = false;
     this.pendingEvents.push(...this.sim.events);
@@ -98,14 +118,24 @@ export class GameRoom extends Room {
       this.broadcast(MSG.snapshot, snapshot);
       this.pendingEvents = [];
     }
+    if (TICK_STATS) {
+      const ms = performance.now() - start;
+      this.stats.ticks++;
+      this.stats.totalMs += ms;
+      this.stats.maxMs = Math.max(this.stats.maxMs, ms);
+    }
   }
 
   private roster(): Roster {
     return { players: [...this.players.values()] };
   }
 
+  // Players in the room see it via a message; people about to join read it from the
+  // room's listing metadata (see the /rooms/:code route).
   private sendRoster() {
-    this.broadcast(MSG.roster, this.roster());
+    const roster = this.roster();
+    this.broadcast(MSG.roster, roster);
+    void this.setMetadata(roster);
   }
 
   // A 4-letter code nobody else is using right now.

@@ -75,8 +75,13 @@ export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
   }
 
   const prevById = new Map(r.prev.tanks.map((t) => [t.id, t]));
-  // Fallen soldiers first, so the living walk over them.
-  for (const tank of r.curr.tanks) if (!tank.alive) drawFallenSoldier(ctx, tank, r.nowMs);
+  // Fallen soldiers first, so the living are drawn on top. Bodies can be pushed, so
+  // they are smoothed between states like everything else.
+  for (const tank of r.curr.tanks) {
+    if (tank.alive) continue;
+    const before = prevById.get(tank.id);
+    drawFallenSoldier(ctx, before && !before.alive ? { ...tank, x: lerp(before.x, tank.x, r.alpha), y: lerp(before.y, tank.y, r.alpha) } : tank, r.nowMs);
+  }
   for (const tank of r.curr.tanks) {
     if (!tank.alive) continue;
     const before = prevById.get(tank.id);
@@ -344,7 +349,9 @@ const FADE_OUT_MS = 350; // body fades just before the respawn
 // them. Stays until the respawn, fading out over the last FADE_OUT_MS.
 export function drawFallenSoldier(ctx: CanvasRenderingContext2D, t: Tank, nowMs: number): void {
   const color = COLORS[t.team];
-  const sinceDeath = RESPAWN_MS - t.respawnMs;
+  // Clamped: a respawn timer longer than RESPAWN_MS (e.g. a mode with longer respawns)
+  // must not give negative sizes, which make the canvas throw.
+  const sinceDeath = Math.max(0, RESPAWN_MS - t.respawnMs);
   const fall = Math.min(1, sinceDeath / FALL_MS);
   ctx.save();
   ctx.translate(t.x, t.y);

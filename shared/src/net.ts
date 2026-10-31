@@ -39,6 +39,14 @@ export interface Roster {
   players: Player[];
 }
 
+// GET {server}/rooms/CODE: who is in a room, so the join form can show the teams before
+// joining. 404 if there is no such room.
+export interface RoomInfo {
+  code: string;
+  players: Player[];
+  maxPlayers: number;
+}
+
 // Room codes: 4 letters, no look-alikes (I/L/O/0/1), easy to read out loud.
 const CODE_LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ";
 export const ROOM_CODE_LENGTH = 4;

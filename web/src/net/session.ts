@@ -1,5 +1,5 @@
 import { Client, type Room } from "@colyseus/sdk";
-import { MSG, ROOM_NAME, type JoinOptions, type Player, type Roster } from "@tank/shared";
+import { MSG, ROOM_NAME, type JoinOptions, type Player, type RoomInfo, type Roster } from "@tank/shared";
 
 // The one live connection to a game room. Kept outside React so it survives the
 // navigation from the home page to /room/CODE.
@@ -17,6 +17,14 @@ function serverUrl(): string {
   // Same host as the page, so phones on the same Wi-Fi reach the dev server too.
   const fallback = `${location.protocol === "https:" ? "wss" : "ws"}://${location.hostname}:2567`;
   return process.env.NEXT_PUBLIC_SERVER_URL || fallback;
+}
+
+// Who is in a room right now, without joining it. null if the room doesn't exist.
+export async function fetchRoomInfo(code: string): Promise<RoomInfo | null> {
+  const res = await fetch(`${serverUrl().replace(/^ws/, "http")}/rooms/${code}`, { cache: "no-store" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`room info failed: ${res.status}`);
+  return (await res.json()) as RoomInfo;
 }
 
 function track(room: Room): Session {

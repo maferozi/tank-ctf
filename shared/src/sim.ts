@@ -20,6 +20,7 @@ import {
   SPEED_BOOST,
   SPEED_MS,
   SPIN_PAUSE_MS,
+  BODY_MASS,
   IDLE_TANK_BRAKE,
   SPIN_SPEED,
   TANK_MASS,
@@ -352,7 +353,7 @@ function nextRandom(state: GameState): number {
 }
 
 function tankBody(t: Tank): Body {
-  const mass = t.driving ? TANK_MASS : TANK_MASS * IDLE_TANK_BRAKE;
+  const mass = !t.alive ? BODY_MASS : t.driving ? TANK_MASS : TANK_MASS * IDLE_TANK_BRAKE;
   return { pos: t, shape: "circle", size: TANK_RADIUS, mass };
 }
 
@@ -371,7 +372,9 @@ function heavyBoxBody(box: Crate | PowerBox, size: number): Body {
 function pushBodies(state: GameState, map: GameMap): void {
   const boxes = [...state.crates, ...state.powerBoxes.filter((p) => p.respawnMs <= 0)];
   const bodies = [
-    ...state.tanks.filter((t) => t.alive).map(tankBody),
+    // Fallen soldiers stay solid where they lie: they can be pushed, and they still
+    // shield their team from bullets wherever they end up.
+    ...state.tanks.map(tankBody),
     ...state.crates.map(crateBody),
     ...state.powerBoxes.filter((p) => p.respawnMs <= 0).map(powerBoxBody),
   ];
@@ -424,6 +427,14 @@ function stepBullets(state: GameState, map: GameMap, dt: number): void {
       state.crates.some((c) => contact(bulletBody, crateBody(c))) ||
       state.powerBoxes.some((p) => p.respawnMs <= 0 && contact(bulletBody, powerBoxBody(p)));
     if (blocked) {
+      state.events.push({ type: "drop", tankId: b.owner, x: b.x, y: b.y });
+      return false;
+    }
+
+    // A fallen soldier's body is cover for their own team: it stops the other team's
+    // bullets until they respawn, while their teammates shoot straight through it.
+    const body = state.tanks.find((t) => !t.alive && t.team !== b.team && (t.x - b.x) ** 2 + (t.y - b.y) ** 2 <= hitR * hitR);
+    if (body) {
       state.events.push({ type: "drop", tankId: b.owner, x: b.x, y: b.y });
       return false;
     }

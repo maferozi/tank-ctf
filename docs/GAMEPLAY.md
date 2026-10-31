@@ -22,6 +22,9 @@ Input bounce guard: shots closer than `FIRE_COOLDOWN_MS` (100 ms) don't fire.
 - They stop on walls, crates and power boxes. Teammates can't hurt each other.
 - One hit kills, unless the target has a shield. Respawn after `RESPAWN_MS` (2 s); the body lies
   where it fell until then.
+- A fallen body is cover for its own team: it stops the other team's bullets until that soldier
+  respawns. Teammates' bullets pass straight through it. Bodies are solid and can be pushed (see
+  weights below), and the cover moves with them.
 
 ## Pushing and weight
 Soldiers, crates and power boxes never overlap. Two bodies pushing each other move together at a
@@ -31,6 +34,7 @@ speed set by their weights:
 |---|---|
 | Walking soldier | `TANK_MASS` = 1 |
 | Standing soldier (brakes on) | 1 × `IDLE_TANK_BRAKE` = 2 |
+| Fallen soldier (until respawn) | `BODY_MASS` = 2 |
 | Crate / power box, once sliding | `CRATE_MASS` = 3 |
 | Crate / power box, at rest | 3 × `CRATE_STATIC` = 6, loosening over `CRATE_BREAKAWAY_MS` (0.6 s) |
 

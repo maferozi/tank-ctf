@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  BODY_MASS,
   BULLET_RANGE,
   BULLET_SPEED,
   CRATE_MASS,
@@ -546,4 +547,98 @@ test("the default map has power boxes clear of walls", () => {
   const state = createState(map);
   assert.ok(state.powerBoxes.length > 0);
   for (const p of state.powerBoxes) assert.equal(boxHitsWall(map, p.x, p.y, POWER_BOX_SIZE / 2), false);
+});
+
+// Red shooter at x=300 facing right, a fallen soldier at x=400, a live target at x=500.
+function shootPastBody(bodyTeam: "red" | "blue") {
+  const state = createState();
+  const shooter = addTank(state, map, "shooter", "red");
+  const body = addTank(state, map, "body", bodyTeam);
+  const target = addTank(state, map, "target", "blue");
+  shooter.x = 300;
+  shooter.y = 300;
+  shooter.angle = 0;
+  body.x = 400;
+  body.y = 300;
+  body.alive = false;
+  body.respawnMs = 5000;
+  step(state, map, { shooter: tap }, config);
+  for (let i = 0; i < 40; i++) {
+    target.x = 500;
+    target.y = 300;
+    step(state, map, {}, config);
+  }
+  return target;
+}
+
+test("an enemy's fallen body stops my bullets", () => {
+  assert.equal(shootPastBody("blue").alive, true, "the blue body should shield the blue target");
+});
+
+test("bullets pass through a fallen teammate's body", () => {
+  assert.equal(shootPastBody("red").alive, false, "the red body must not block red bullets");
+});
+
+test("a fallen body stops blocking once that soldier respawns", () => {
+  const state = createState();
+  const shooter = addTank(state, map, "shooter", "red");
+  const body = addTank(state, map, "body", "blue");
+  const target = addTank(state, map, "target", "blue");
+  body.alive = false;
+  body.respawnMs = TICK_MS; // respawns (back at its spawn) on the next step
+  step(state, map, {}, config);
+  assert.equal(body.alive, true);
+  shooter.x = 300;
+  shooter.y = 300;
+  shooter.angle = 0;
+  step(state, map, { shooter: tap }, config);
+  for (let i = 0; i < 40; i++) {
+    target.x = 500;
+    target.y = 300;
+    step(state, map, {}, config);
+  }
+  assert.equal(target.alive, false);
+});
+
+test("a fallen body is solid: walking into it pushes it at body weight", () => {
+  const { state, a, b } = duel(0, Math.PI);
+  b.alive = false;
+  b.respawnMs = 60_000; // stays down for the whole test
+  for (let i = 0; i < 10; i++) step(state, map, { a: hold }, config);
+  const bx = b.x;
+  for (let i = 0; i < 60; i++) {
+    step(state, map, { a: hold }, config);
+    assert.ok(gapOf(a, b) >= TANK_RADIUS * 2 - 1e-6, "walked into the body");
+  }
+  const expected = DRIVE_SPEED / (1 + BODY_MASS); // px over 1 s
+  assert.ok(Math.abs(b.x - bx - expected) < 3, `moved ${(b.x - bx).toFixed(1)}, expected ~${expected.toFixed(1)}`);
+});
+
+test("a pushed body still shields its team where it ends up", () => {
+  const state = createState();
+  const pusher = addTank(state, map, "pusher", "red");
+  const body = addTank(state, map, "body", "blue");
+  pusher.x = 300;
+  pusher.y = 300;
+  pusher.angle = 0;
+  body.x = 300 + TANK_RADIUS * 2;
+  body.y = 300;
+  body.alive = false;
+  body.respawnMs = 60_000;
+  for (let i = 0; i < 60; i++) step(state, map, { pusher: hold }, config);
+  assert.ok(body.x > 360, "body should have been pushed along");
+  // Now a red shot from behind the pusher's line hits the body, not a blue soldier behind it.
+  const target = addTank(state, map, "target", "blue");
+  const shooter = addTank(state, map, "shooter", "red");
+  shooter.x = body.x - 80;
+  shooter.y = 300 + 0.5;
+  shooter.angle = 0;
+  pusher.x = 200; // out of the line of fire
+  step(state, map, { shooter: tap }, config);
+  for (let i = 0; i < 40; i++) {
+    target.x = body.x + 80;
+    target.y = 300;
+    step(state, map, {}, config);
+  }
+  assert.equal(target.alive, true);
 });

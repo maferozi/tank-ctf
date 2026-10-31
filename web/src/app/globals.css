@@ -277,3 +277,33 @@ a {
   background: rgba(10, 12, 16, 0.8);
   cursor: default;
 }
+
+/* Team lists inside the team buttons on the join form. */
+.team-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.team-list {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.team-count {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.team-member {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

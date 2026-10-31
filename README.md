@@ -12,7 +12,8 @@ npm run dev:server   # game server on ws://localhost:2567
 ```
 
 - `/` — pick a name and team, then create a room or join one by its 4-letter code.
-- `/room/CODE` — a room. Share this link; opening it asks for a name and team, then joins.
+- `/room/CODE` — a room. Share this link; opening it shows who is on Red and Blue (live), asks
+  for a name and team, then joins.
 - `/play` — solo practice against spinning targets.
 - `/dev/sprites` — dev-only preview of the art, drawn large.
 
@@ -30,6 +31,7 @@ firewall allows ports 3000 and 2567. The Next.js dev server may also need that I
 npm test -w shared          # game rules
 npm run typecheck           # all three packages
 npm run smoke -w server     # two bots play a round against a running server
+npm run loadtest -w server  # 8 bots for 20 s: sync, latency and bandwidth report
 ```
 
 ## Layout
@@ -40,4 +42,5 @@ npm run smoke -w server     # two bots play a round against a running server
 | `web/src/game/` | Game screen, canvas renderer, one-button input, solo and online drivers. |
 | `web/src/net/` | Connection to the server, home menu, room page and join form. |
 | `docs/GAMEPLAY.md` | How the game plays, with every tuning number. |
+| `docs/NETCODE.md` | How online sync works, load-test results, what latency players feel. |
 | `PLAN.md` | Decisions, phases and status. |

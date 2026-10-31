@@ -1,6 +1,6 @@
 "use client";
 
-import { MAX_NAME_LENGTH, type Team } from "@tank/shared";
+import { MAX_NAME_LENGTH, type Player, type Team } from "@tank/shared";
 import { useEffect, useState } from "react";
 
 const NAME_KEY = "tank-ctf:name";
@@ -44,7 +44,9 @@ export function usePlayerSetup() {
   };
 }
 
-export function PlayerFields({ setup }: { setup: ReturnType<typeof usePlayerSetup> }) {
+// With `players` (joining an existing room), each team button also lists who is already
+// on that team, so you can see the teams and pick one in the same place.
+export function PlayerFields({ setup, players }: { setup: ReturnType<typeof usePlayerSetup>; players?: Player[] }) {
   return (
     <>
       <label className="field">
@@ -70,10 +72,26 @@ export function PlayerFields({ setup }: { setup: ReturnType<typeof usePlayerSetu
               onClick={() => setup.setTeam(t)}
             >
               {t === "red" ? "Red" : "Blue"}
+              {players && <TeamList players={players.filter((p) => p.team === t)} />}
             </button>
           ))}
         </div>
       </div>
     </>
+  );
+}
+
+function TeamList({ players }: { players: Player[] }) {
+  return (
+    <span className="team-list">
+      <span className="team-count">
+        {players.length} {players.length === 1 ? "player" : "players"}
+      </span>
+      {players.map((p) => (
+        <span key={p.id} className="team-member">
+          {p.name}
+        </span>
+      ))}
+    </span>
   );
 }
