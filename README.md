@@ -30,6 +30,11 @@ and a shared TypeScript game simulation that runs on both the server and every p
 
 How it all plays, with every tuning number: [docs/GAMEPLAY.md](docs/GAMEPLAY.md).
 
+## Play it
+**https://tank-ctf.vercel.app**: create a room and send friends the link. The game server is on
+Render's free plan in Singapore and sleeps after 15 minutes without players, so the first visit
+after a quiet spell can take about a minute to connect.
+
 ## Run it locally
 Needs Node.js 22+.
 

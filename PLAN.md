@@ -65,6 +65,16 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
   In-game Leave button with a confirm. A dropped player (refresh, network blip) keeps their seat
   and soldier for 30 s and rejoins automatically. After the match everyone returns to the lobby.
 
+## Deployed (31 Oct 2026)
+- Web: Vercel project `tank-ctf` (team "asad's projects"), https://tank-ctf.vercel.app, root
+  directory `web`, auto-deploys on push to `main`. Env: `NEXT_PUBLIC_SERVER_URL` =
+  `wss://tank-ctf-server-jd5n.onrender.com` (Production).
+- Game server: Render web service `tank-ctf-server`, Singapore, Free plan, from `main`
+  (`npm ci` / `npm start`, Node 22, health check `/health`), auto-deploys on push. Sleeps after
+  15 min idle (~1 min to wake). `render.yaml` documents the same settings.
+- Live test from Lahore: smoke test passes; 8 bots: 60 ticks/s, 0 state mismatches, press to
+  shot ~130 ms median, snapshot gap p99 ~105 ms (real-network jitter).
+
 ## Known gaps after phase 2
 - 8-player load test passed (see `docs/NETCODE.md`): steady 60 Hz server, 30 Hz snapshots, no
   hitches, identical state for all.
@@ -83,7 +93,7 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
 4. Capture the flag: flags, bases, scoring, timer, win screen.
 5. Voice chat: LiveKit room per lobby, mute, speaking indicators.
 6. Maps and art: more maps, floor and prop art, sounds. (4 maps exist; see docs/GAMEPLAY.md.)
-7. Deploy, playtest with friends, tune latency and feel.
+7. Deploy, playtest with friends, tune latency and feel. Deployed; playtesting next.
 
 ## Cautions
 - Mic needs HTTPS and a user click to start. Players need headphones to avoid echo.
