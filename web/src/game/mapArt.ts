@@ -1,6 +1,6 @@
-import { BASE_RADIUS, TILE, type Flag, type GameMap, type MapTheme, type Team, type TileKind } from "@tank/shared";
+import { BASE_RADIUS, SPAWN_PAD_SIZE, SPAWN_PAD_SPREAD, TILE, type Flag, type GameMap, type MapTheme, type Team, type TileKind } from "@tank/shared";
 
-// The still parts of a map: floor, walls, water and spawn zones, in a light style.
+// The still parts of a map: floor, walls, water and respawn squares, in a light style.
 // They never change during a round, so each map is drawn once into an offscreen canvas
 // and copied onto the screen every frame.
 
@@ -26,8 +26,8 @@ const WOOD = { floor: "#d39a5e", seam: "rgba(110, 60, 20, 0.22)" };
 const WATER = { fill: "#9ed3e4", wave: "rgba(255, 255, 255, 0.55)", edge: "#7fbcd0" };
 
 const TEAM: Record<Team, { body: string; dark: string; zone: string }> = {
-  red: { body: "#e5484d", dark: "#a8262b", zone: "rgba(229, 72, 77, 0.14)" },
-  blue: { body: "#2f80ed", dark: "#1a5aa8", zone: "rgba(47, 128, 237, 0.14)" },
+  red: { body: "#e5484d", dark: "#a8262b", zone: "rgba(229, 72, 77, 0.2)" },
+  blue: { body: "#2f80ed", dark: "#1a5aa8", zone: "rgba(47, 128, 237, 0.2)" },
 };
 
 const ART_SCALE = 2; // offscreen resolution: crisp on high-density screens
@@ -57,10 +57,7 @@ function paintMap(ctx: CanvasRenderingContext2D, map: GameMap): void {
     if (kind === "wood") paintWood(ctx, c, r);
     if (kind === "water") paintWater(ctx, map, c, r);
   });
-  for (const team of ["red", "blue"] as const) {
-    ctx.fillStyle = TEAM[team].zone;
-    for (const s of map.spawns[team]) ctx.fillRect(s.x - TILE / 2, s.y - TILE / 2, TILE, TILE);
-  }
+  for (const team of ["red", "blue"] as const) paintPad(ctx, team, map.pads[team]);
   forEachTile(map, (kind, c, r) => {
     if (kind === "wall") paintWall(ctx, map, pal, c, r);
   });
@@ -189,35 +186,49 @@ function edges(
   if (differs(kindAt(map, c + 1, r))) ctx.fillRect(x + TILE - width, y, width, TILE);
 }
 
-// Where a team scores: a square pad in the team colour. Flags stand on a round plinth;
-// on maps without pads the pad sits under the team's own flag stand.
-export function drawBase(ctx: CanvasRenderingContext2D, flag: Flag): void {
-  const color = TEAM[flag.team];
-  const size = BASE_RADIUS * 1.5;
-  const h = size / 2;
-  ctx.fillStyle = color.body;
-  ctx.strokeStyle = color.dark;
+// A team's respawn square: tinted, outlined in the team colour, a dot on each spawn spot.
+function paintPad(ctx: CanvasRenderingContext2D, team: Team, pad: { x: number; y: number }): void {
+  const color = TEAM[team];
+  const h = SPAWN_PAD_SIZE / 2 - 2;
+  ctx.fillStyle = color.zone;
+  ctx.strokeStyle = color.body;
   ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.roundRect(flag.baseX - h, flag.baseY - h, size, size, 6);
+  ctx.roundRect(pad.x - h, pad.y - h, h * 2, h * 2, 8);
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
-  ctx.beginPath();
-  ctx.roundRect(flag.baseX - h + 7, flag.baseY - h + 7, size - 14, size - 14, 4);
-  ctx.fill();
   ctx.fillStyle = color.body;
-  ctx.beginPath();
-  ctx.moveTo(flag.baseX, flag.baseY - 8);
-  ctx.lineTo(flag.baseX + 8, flag.baseY);
-  ctx.lineTo(flag.baseX, flag.baseY + 8);
-  ctx.lineTo(flag.baseX - 8, flag.baseY);
-  ctx.closePath();
-  ctx.fill();
+  ctx.globalAlpha = 0.35;
+  const d = SPAWN_PAD_SPREAD;
+  for (const [dx, dy] of [
+    [-d, -d],
+    [d, -d],
+    [-d, d],
+    [d, d],
+  ] as const) {
+    ctx.beginPath();
+    ctx.arc(pad.x + dx, pad.y + dy, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
 
-  // The flag's round plinth (where it returns to).
-  ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
-  ctx.strokeStyle = "rgba(60, 70, 85, 0.45)";
+// Where a team scores: a ring in the team colour around its flag stand (BASE_RADIUS), with
+// the round plinth the flag returns to in the middle.
+export function drawBase(ctx: CanvasRenderingContext2D, flag: Flag): void {
+  const color = TEAM[flag.team];
+  ctx.fillStyle = color.zone;
+  ctx.beginPath();
+  ctx.arc(flag.homeX, flag.homeY, BASE_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = color.body;
+  ctx.lineWidth = 3;
+  ctx.setLineDash([7, 5]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+  ctx.strokeStyle = color.dark;
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.arc(flag.homeX, flag.homeY, 13, 0, Math.PI * 2);

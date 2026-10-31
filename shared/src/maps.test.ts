@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BED_SIZE, CRATE_SIZE, POWER_BOX_SIZE, TANK_RADIUS, TILE } from "./constants";
+import { BED_SIZE, CRATE_SIZE, SPAWN_PAD_SIZE, POWER_BOX_SIZE, TANK_RADIUS, TILE } from "./constants";
 import { boxHitsSolid, circleHitsSolid, isBlockedAt, type GameMap } from "./map";
 import { MAPS } from "./maps";
 
@@ -61,9 +61,17 @@ for (const map of MAPS) {
     });
   });
 
-  test(`${map.name}: every spawn can reach both flags, both scoring spots and every power box`, () => {
-    const bases = [map.bases.red ?? map.flags.red!, map.bases.blue ?? map.flags.blue!];
-    const targets = [map.flags.red!, map.flags.blue!, ...bases, ...map.powerBoxes].map(tileOf);
+  test(`${map.name}: each respawn square is clear of walls and water, away from its flag`, () => {
+    for (const team of ["red", "blue"] as const) {
+      const pad = map.pads[team];
+      assert.equal(boxHitsSolid(map, pad.x, pad.y, SPAWN_PAD_SIZE / 2), false);
+      const flag = map.flags[team]!;
+      assert.ok(Math.hypot(flag.x - pad.x, flag.y - pad.y) > 3 * TILE, "respawning right on the flag");
+    }
+  });
+
+  test(`${map.name}: every spawn can reach both flags and every power box`, () => {
+    const targets = [map.flags.red!, map.flags.blue!, ...map.powerBoxes].map(tileOf);
     for (const spawn of [...map.spawns.red, ...map.spawns.blue]) {
       const area = reachable(map, tileOf(spawn));
       for (const t of targets) assert.ok(area.has(`${t.c},${t.r}`), `tile ${t.c},${t.r} unreachable from spawn`);
@@ -80,7 +88,7 @@ test("the new maps are exactly fair: Blue's side is Red's, mirrored or rotated",
     const fairUnder = (flip: typeof mirror) =>
       JSON.stringify(flip(map.flags.red!)) === JSON.stringify(map.flags.blue) &&
       JSON.stringify(key(map.spawns.red.map(flip))) === JSON.stringify(key(map.spawns.blue)) &&
-      JSON.stringify(map.bases.red && flip(map.bases.red)) === JSON.stringify(map.bases.blue);
+      JSON.stringify(flip(map.pads.red)) === JSON.stringify(map.pads.blue);
     assert.ok(fairUnder(mirror) || fairUnder(rotate), `${map.name} is not symmetric`);
   }
 });

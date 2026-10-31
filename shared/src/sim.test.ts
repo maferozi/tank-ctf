@@ -322,8 +322,9 @@ test("a crate is slow to get going, then slides at a steady heavy pace", () => {
 // An empty walled room, so a big bed has space to slide.
 const OPEN_ROOM = parseMap([
   "#".repeat(28),
-  `#R${".".repeat(24)}B#`,
-  ...Array.from({ length: 15 }, () => `#${".".repeat(26)}#`),
+  `#11${".".repeat(22)}22#`,
+  `#11${".".repeat(22)}22#`,
+  ...Array.from({ length: 14 }, () => `#${".".repeat(26)}#`),
   "#".repeat(28),
 ]);
 

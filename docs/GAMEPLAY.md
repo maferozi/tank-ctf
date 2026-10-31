@@ -20,8 +20,8 @@ Input bounce guard: shots closer than `FIRE_COOLDOWN_MS` (100 ms) don't fire.
 ## Bullets
 - Speed `BULLET_SPEED` (440 px/s), range `BULLET_RANGE` (320 px), then they drop.
 - They stop on walls, crates, beds and power boxes. Teammates can't hurt each other.
-- One hit kills, unless the target has a shield. Respawn after `RESPAWN_MS` (2 s); the body lies
-  where it fell until then.
+- One hit kills, unless the target has a shield. Respawn after `RESPAWN_MS` (2 s) on your
+  team's respawn square; the body lies where it fell until then.
 - A fallen body is cover for its own team: it stops the other team's bullets until that soldier
   respawns. Teammates' bullets pass straight through it. Bodies are solid and can be pushed (see
   weights below), and the cover moves with them.
@@ -33,13 +33,17 @@ Input bounce guard: shots closer than `FIRE_COOLDOWN_MS` (100 ms) don't fire.
   a few pixels, and falls away from the shooter.
 
 ## Capture the flag
-- Each team's flag stands at its base, a dashed ring (`BASE_RADIUS` 34 px) on the map:
-  `r` / `b` in the map legend. Red's base is on the left, Blue's on the right.
+- Each team has a **respawn square** (2 × 2 tiles, `SPAWN_PAD_SIZE` 80 px, `1` / `2` in the map
+  legend) with four spawn spots. Everyone starts each round there and comes back there after
+  dying. With more than four on a team, soldiers sharing a spot get pushed apart.
+- Each team's flag stands at its base, a dashed ring (`BASE_RADIUS` 34 px) around the flag
+  stand: `r` / `b` in the map legend.
 - Touch the enemy flag to pick it up; it rides on your back. Carriers walk at
   `CARRIER_SPEED` (0.8×).
-- Carry it into your own base to win the round. A "RED WINS" / "BLUE WINS" banner shows,
-  everything freezes, and after `ROUND_RESTART_MS` (6 s) a fresh round starts: everyone back at
-  spawn, flags home, crates and power boxes reset.
+- Carry it into your own base (the ring around your own flag stand) to win the round. The
+  respawn square doesn't count. A "RED WINS" / "BLUE WINS" banner shows,
+  everything freezes, and after `ROUND_RESTART_MS` (6 s) a fresh round starts: everyone back on
+  their respawn square, flags home, crates and power boxes reset.
 - Shoot the carrier and the flag drops where they fall. An enemy can grab it again; one of its
   own team touching it sends it home. Left alone it goes home after `FLAG_RETURN_MS` (15 s),
   shown by a ring that empties around it.
@@ -97,31 +101,29 @@ roll the same.
 
 ## Maps
 All maps are 28×18 tiles (40 px each), defined as text in `shared/src/maps.ts` (Arena is in
-`map.ts`). Legend: `#` wall, `.` floor, `R`/`B` red/blue spawn, `X` crate, `P` power box,
-`r`/`b` red/blue flag stand, `1`/`2` red/blue scoring pad, `T` bed (each 2 × 2 block is one
-bed), `~` water,
-`,` wood floor.
+`map.ts`). Legend: `#` wall, `.` floor, `1`/`2` red/blue respawn square (a 2 × 2 block),
+`X` crate, `P` power box, `r`/`b` red/blue flag stand, `T` bed (each 2 × 2 block is one bed),
+`~` water, `,` wood floor.
 
 | Map | Layout |
 |---|---|
-| Arena | The original practice arena, bases on the left and right middle. |
-| Crossfire | Open middle with cover blocks; each base in a U of walls opening towards its spawns. |
-| Fortress | Walled-in bases with narrow doors; crates near the doors can be pushed in as barricades. |
-| Canyon | Three long lanes split by walls, joined in the middle and at the ends. |
-| Classroom | Wooden floor packed with 30 movable beds in rows, 4 px apart side by side, with one-tile aisles between rows. Push beds aside to cut through. Flags on the left and right edges; scoring pads in opposite corners behind a short wall. |
-| Garden | Grass, a house with one wooden room per team and doors in its outer walls, a pool along the top. Pads in the top corners. |
-| Crossroads | Light tiles, plus-shaped walls, notches along the edges, a centre block. Each team's flag and pad in opposite corners. |
+| Arena | The original practice arena, flags on the left and right middle, respawn squares in the top corners. |
+| Crossfire | Open middle with cover blocks; each flag in a U of walls. Respawn squares top left and top right. |
+| Fortress | Walled-in rooms with narrow doors (respawn squares in the top rooms, flags in the middle ones); crates near the doors can be pushed in as barricades. |
+| Canyon | Three long lanes split by walls, joined in the middle and at the ends. Respawn squares at the top ends. |
+| Classroom | Wooden floor packed with 30 movable beds in rows, 4 px apart side by side, with one-tile aisles between rows. Push beds aside to cut through. Flags on the left and right edges; respawn squares in opposite corners behind a short wall. |
+| Garden | Grass, a house with one wooden room per team and doors in its outer walls, a pool along the top. Respawn squares in the top corners. |
+| Crossroads | Light tiles, plus-shaped walls, notches along the edges, a centre block. Each team's flag and respawn square in opposite corners. |
 
 Classroom, Garden and Crossroads recreate the layouts of the original app's capture-the-flag
-maps in our own art. On them each team **scores on its square pad**, not at its own flag stand
-(on the other maps the pad sits under the flag stand). **Water** blocks walking and sliding
-bodies, but bullets fly over it.
+maps in our own art. **Water** blocks walking and sliding bodies, but bullets fly over it.
 
 Practice any map solo with `/play?map=<id>` (e.g. `/play?map=garden`).
 
 Every map except Arena is exactly fair: Blue's side is Red's mirrored (Crossfire, Fortress,
 Canyon, Garden) or rotated half a turn (Classroom, Crossroads). `shared/src/maps.test.ts` checks every map: right size, nothing inside walls or water, every
-spawn can reach both flags, both scoring spots and every power box, and the symmetry.
+spawn can reach both flags and every power box, respawn squares clear of walls and away from
+the flags, nothing starting on top of anything else, and the symmetry.
 
 When creating a room you pick a map for each round (tap a round, then a map; tapping maps in
 order fills the rounds in order). Rounds you don't change cycle through the maps. The join page

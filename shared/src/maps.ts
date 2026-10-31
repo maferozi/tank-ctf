@@ -1,23 +1,23 @@
 import { DEFAULT_MAP, parseMap, type GameMap } from "./map";
 
 // All playable maps. Every map is 28 x 18 tiles, so the screen layout never changes
-// between rounds. Legend as in map.ts: '#' wall, '.' floor, 'R'/'B' spawns, 'X' crate,
-// 'P' power box, 'r'/'b' flag stands.
+// between rounds. Legend as in map.ts: '#' wall, '.' floor, '1'/'2' respawn squares (2 x 2),
+// 'X' crate, 'P' power box, 'r'/'b' flag stands.
 
 // The new maps are drawn as Red's (left) half only and mirrored for Blue, so both sides
 // are exactly fair.
 function mirrored(leftHalf: readonly string[]): string[] {
-  const swap: Record<string, string> = { R: "B", B: "R", r: "b", b: "r" };
+  const swap: Record<string, string> = { "1": "2", "2": "1", r: "b", b: "r" };
   return leftHalf.map((row) => row + [...row].reverse().map((ch) => swap[ch] ?? ch).join(""));
 }
 
-// Open middle with cover blocks; each base sits in a U of walls that opens towards its
-// own spawns.
+// Open middle with cover blocks; each flag sits in a U of walls that opens towards its
+// own team's side.
 const CROSSFIRE = mirrored([
   "##############",
   "#.............",
-  "#.RR..........",
-  "#.RR...##.....",
+  "#.11..........",
+  "#.11...##.....",
   "#......##...X.",
   "#.............",
   "#...####......",
@@ -27,8 +27,8 @@ const CROSSFIRE = mirrored([
   "#...####......",
   "#.............",
   "#......##...X.",
-  "#.RR...##.....",
-  "#.RR..........",
+  "#......##.....",
+  "#.............",
   "#.............",
   "#.............",
   "##############",
@@ -38,8 +38,8 @@ const CROSSFIRE = mirrored([
 const FORTRESS = mirrored([
   "##############",
   "#.............",
-  "#.RR....#.....",
-  "#.RR....#..P..",
+  "#.11....#.....",
+  "#.11....#..P..",
   "#.......#.....",
   "#####.###.....",
   "#.........X...",
@@ -49,8 +49,8 @@ const FORTRESS = mirrored([
   "#..X..........",
   "#####.###.....",
   "#.......#.....",
-  "#.RR....#..P..",
-  "#.RR....#.....",
+  "#.......#..P..",
+  "#.......#.....",
   "#.............",
   "#.............",
   "##############",
@@ -59,8 +59,8 @@ const FORTRESS = mirrored([
 // Three long lanes split by walls, joined in the middle and at the ends.
 const CANYON = mirrored([
   "##############",
-  "#.RR..........",
-  "#.RR..........",
+  "#.11..........",
+  "#.11..........",
   "#....########.",
   "#.........X...",
   "#.............",
@@ -73,55 +73,55 @@ const CANYON = mirrored([
   "#.............",
   "#.........X...",
   "#....########.",
-  "#.RR..........",
-  "#.RR..........",
+  "#.............",
+  "#.............",
   "##############",
 ]);
 
 // The next three recreate layouts from the original app's capture-the-flag mini game in
 // our own art. They are generated with exact symmetry (Red's half rotated or mirrored for
-// Blue). Here each team scores on its square pad ('1' / '2'), not at its flag.
+// Blue). Their respawn squares sit in the corners, far from the flags.
 
 // Wooden floor packed with beds (2 x 2 tiles each, heavier than crates), with narrow aisles
 // between the rows: push beds aside to cut through. Flags on the left and right edges,
-// scoring pads in opposite corners behind a short wall.
+// respawn squares in opposite corners behind a short wall.
 const CLASSROOM = [
   "############################",
   "#............P.........#...#",
-  "#......TTTTTTTTTTTTTT..#.2.#",
-  "#......TTTTTTTTTTTTTT..#...#",
-  "#.RR...................#...#",
+  "#......TTTTTTTTTTTTTT..#22.#",
+  "#......TTTTTTTTTTTTTT..#22.#",
+  "#......................#...#",
   "#.....TTTTTT..TTTTTT.......#",
-  "#....XTTTTTT..TTTTTT....BB.#",
+  "#....XTTTTTT..TTTTTT.......#",
   "#..........................#",
   "#.r....TTTT..P...TTTT......#",
   "#......TTTT...P..TTTT....b.#",
   "#..........................#",
-  "#.RR....TTTTTT..TTTTTTX....#",
+  "#.......TTTTTT..TTTTTTX....#",
   "#.......TTTTTT..TTTTTT.....#",
-  "#...#...................BB.#",
-  "#...#..TTTTTTTTTTTTTT......#",
-  "#.1.#..TTTTTTTTTTTTTT......#",
+  "#...#......................#",
+  "#.11#..TTTTTTTTTTTTTT......#",
+  "#.11#..TTTTTTTTTTTTTT......#",
   "#...#.........P............#",
   "############################",
 ];
 
 // Grass outside, a house with one wooden room per team and doors in the outer walls, a
-// pool along the top that blocks walking but not bullets. Pads in the top corners.
+// pool along the top that blocks walking but not bullets. Respawn squares in the top corners.
 const GARDEN = [
   "############################",
-  "#.1.....~~~~~~~~~~~~.....2.#",
-  "#.......~~~~~~~~~~~~.......#",
+  "#.11....~~~~~~~~~~~~....22.#",
+  "#.11....~~~~~~~~~~~~....22.#",
   "#.......~~~~~~~~~~~~.......#",
   "#.....################.....#",
   "#......,,,,,,##,,,,,,......#",
-  "#......,R,R,,##,,B,B,......#",
+  "#......,,,,,,##,,,,,,......#",
   "#.....#,,,,,,##,,,,,,#.....#",
-  "#.....#,R,Xr,##,bX,B,#.....#",
+  "#.....#,,,Xr,##,bX,,,#.....#",
   "#..P..#,,,,,,##,,,,,,#..P..#",
   "#.....#####,,##,,#####.....#",
   "#.....#,,,,,,##,,,,,,#.....#",
-  "#......,,R,,,##,,,B,,......#",
+  "#......,,,,,,##,,,,,,......#",
   "#......,,,,,,##,,,,,,......#",
   "#.....#,,,,,,,,,,,,,,#.....#",
   "#.....################.....#",
@@ -130,13 +130,13 @@ const GARDEN = [
 ];
 
 // Light tiles with plus-shaped walls, notches along the edges and a block in the centre.
-// Each team's flag and scoring pad sit in opposite corners.
+// Each team's flag and respawn square sit in opposite corners.
 const CROSSROADS = [
   "############################",
-  "#.r..#....#..............2.#",
-  "#...R.................X....#",
-  "#.R..R.......P.............#",
-  "#..R..#...#..........#.....#",
+  "#.r..#....#.............22.#",
+  "#.....................X.22.#",
+  "#............P.............#",
+  "#.....#...#..........#.....#",
   "##...###..##........###....#",
   "#.....#...#.......X..#.....#",
   "#............##............#",
@@ -145,10 +145,10 @@ const CROSSROADS = [
   "#............##............#",
   "#.....#..X.......#...#.....#",
   "#....###........##..###...##",
-  "#.....#..........#...#..B..#",
-  "#.............P.......B..B.#",
-  "#....X.................B...#",
-  "#.1..............#....#..b.#",
+  "#.....#..........#...#.....#",
+  "#.............P............#",
+  "#.11.X.....................#",
+  "#.11.............#....#..b.#",
   "############################",
 ];
 

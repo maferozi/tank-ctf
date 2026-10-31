@@ -56,6 +56,10 @@ export const HIT_KNOCKBACK = 70; // px/s a bullet gives a standing soldier as th
 // it; carrying it into their own base wins the round.
 export const FLAG_RADIUS = 10; // touching distance is this plus TANK_RADIUS
 export const BASE_RADIUS = 34; // a carrier this close to their own flag stand scores
+// Each team's respawn square: 2 x 2 tiles. Soldiers start each round and respawn on one of
+// its four spots, SPAWN_PAD_SPREAD px from its centre along each axis.
+export const SPAWN_PAD_SIZE = 80;
+export const SPAWN_PAD_SPREAD = 20;
 export const CARRIER_SPEED = 0.8; // walking speed multiplier while carrying a flag
 export const FLAG_RETURN_MS = 15000; // a dropped flag left alone goes home after this
 export const ROUND_RESTART_MS = 6000; // win banner, then a fresh round

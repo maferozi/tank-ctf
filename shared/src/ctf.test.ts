@@ -6,6 +6,7 @@ import {
   CARRIER_SPEED,
   DRIVE_SPEED,
   FLAG_RETURN_MS,
+  SPAWN_PAD_SIZE,
   TANK_RADIUS,
   TICK_MS,
   TILE,
@@ -224,25 +225,39 @@ test("a sliding body stops at a wall", () => {
   assert.equal(t.vx, 0);
 });
 
-// Maps with scoring pads (Classroom, Garden, Crossroads)
-test("on maps with pads, a carrier scores on the pad, not at the flag stand", () => {
+// Every map: score at your own flag stand. The square is only where you respawn.
+test("a carrier scores at their own flag stand, not on their respawn square", () => {
   const classroom = getMap("classroom");
   const state = createState(classroom);
   const red = addTank(state, classroom, "red1", "red");
   addTank(state, classroom, "blue1", "blue");
   const blueFlag = flagOf(state, "blue");
   const redFlag = flagOf(state, "red");
-  assert.notDeepEqual([redFlag.baseX, redFlag.baseY], [redFlag.homeX, redFlag.homeY], "pad and stand differ");
   blueFlag.carrier = red.id;
   blueFlag.atHome = false;
-  red.x = redFlag.homeX; // at our own flag stand: not a score here
-  red.y = redFlag.homeY;
+  red.x = classroom.pads.red.x; // on our respawn square: not a score
+  red.y = classroom.pads.red.y;
   step(state, classroom, {}, config);
   assert.equal(state.winner, null);
-  red.x = redFlag.baseX; // on our pad: score
-  red.y = redFlag.baseY;
+  red.x = redFlag.homeX; // at our own flag stand: score
+  red.y = redFlag.homeY;
   step(state, classroom, {}, config);
   assert.equal(state.winner, "red");
+});
+
+test("a shot soldier respawns on their team's square", () => {
+  const garden = getMap("garden");
+  const state = createState(garden);
+  const blue = addTank(state, garden, "blue1", "blue");
+  blue.x = 14 * TILE; // somewhere in the middle of the map
+  blue.y = 16.5 * TILE;
+  blue.alive = false;
+  blue.respawnMs = TICK_MS;
+  step(state, garden, {}, config);
+  assert.ok(blue.alive);
+  const pad = garden.pads.blue;
+  const half = SPAWN_PAD_SIZE / 2;
+  assert.ok(Math.abs(blue.x - pad.x) < half && Math.abs(blue.y - pad.y) < half, `respawned at ${blue.x}, ${blue.y}`);
 });
 
 test("water blocks walking but bullets fly over it", () => {

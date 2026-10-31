@@ -75,6 +75,8 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
 - Live test from Lahore: smoke test passes; 8 bots: 60 ticks/s, 0 state mismatches, press to
   shot ~130 ms median, snapshot gap p99 ~105 ms (real-network jitter).
 
+- Respawn squares (31 Oct 2026): every map has a 2 x 2 respawn square per team where soldiers
+  start each round and respawn; teams score at their own flag stand on every map.
 - Maps and look (31 Oct 2026): light theme everywhere. Three maps recreated from the original
   app's layouts (Classroom, Garden, Crossroads) with scoring pads separate from the flag stands,
   water that blocks walking but not bullets, desks, and per-map floor art (wood, grass, tiles).
