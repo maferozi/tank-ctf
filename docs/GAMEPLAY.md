@@ -20,7 +20,7 @@ Input bounce guard: shots closer than `FIRE_COOLDOWN_MS` (100 ms) don't fire.
 ## Bullets
 - Speed `BULLET_SPEED` (440 px/s), range `BULLET_RANGE` (320 px), then they drop.
 - They stop on walls, crates, beds and power boxes. Teammates can't hurt each other.
-- One hit kills, unless the target has a shield. Respawn after `RESPAWN_MS` (2 s) on your
+- One hit kills, unless the target has a shield. Respawn after `RESPAWN_MS` (8 s) on your
   team's respawn square; the body lies where it fell until then.
 - A fallen body is cover for its own team: it stops the other team's bullets until that soldier
   respawns. Teammates' bullets pass straight through it. Bodies are solid and can be pushed (see

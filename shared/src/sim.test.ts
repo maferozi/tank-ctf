@@ -17,6 +17,7 @@ import {
   POWER_RESPAWN_MS,
   RAPID_FIRE_MS,
   RELOAD_MS,
+  RESPAWN_MS,
   SHIELD_MS,
   SPEED_BOOST,
   SPIN_PAUSE_MS,
@@ -171,7 +172,10 @@ test("bullet kills an enemy and the enemy respawns", () => {
   }
   assert.ok(killed);
   assert.equal(target.alive, false);
-  for (let i = 0; i < ticks(2000) + 1; i++) step(state, map, {}, config);
+  // Still down just before RESPAWN_MS, back right after.
+  for (let i = 0; i < ticks(RESPAWN_MS) - 2; i++) step(state, map, {}, config);
+  assert.equal(target.alive, false);
+  for (let i = 0; i < 3; i++) step(state, map, {}, config);
   assert.equal(target.alive, true);
 });
 

@@ -45,7 +45,7 @@ export const FIRE_COOLDOWN_MS = 100;
 export const MAX_AMMO = 6;
 export const RELOAD_MS = 1500; // one round back every RELOAD_MS while below MAX_AMMO
 
-export const RESPAWN_MS = 2000;
+export const RESPAWN_MS = 8000;
 
 // Falling. A soldier shot while walking keeps sliding forward and falls face-first; a
 // standing soldier is knocked back a little by the bullet. Either way the body slows down.
