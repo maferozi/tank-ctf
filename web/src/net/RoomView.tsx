@@ -3,11 +3,13 @@
 import { normalizeRoomCode, type RoomInfo } from "@tank/shared";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useReducer, useState, type FormEvent } from "react";
+import { useEffect, useReducer, useState, type FormEvent, type ReactNode } from "react";
 import { GameScreen } from "@/game/GameScreen";
 import { createOnlineDriver } from "@/game/onlineDriver";
+import { Icon } from "./Icon";
 import { Lobby } from "./Lobby";
 import { Logo } from "./Logo";
+import { MicChip } from "./MicChip";
 import { RoomChip } from "./RoomChip";
 import { RoundMaps } from "./MapPicker";
 import { PlayerFields, usePlayerSetup } from "./PlayerSetup";
@@ -53,38 +55,39 @@ export function RoomView({ rawCode }: { rawCode: string }) {
 
   if (!code) {
     return (
-      <main className="home message">
-        <h1>No such room</h1>
-        <p>Room codes are 4 letters, like KQTR.</p>
+      <Message title="No such room" text="Room codes are 4 letters, like KQTR.">
         <Link className="button" href="/">
           Back
         </Link>
-      </main>
+      </Message>
     );
   }
   if (!checked) return null;
   if (!session) return <JoinForm code={code} onJoined={setSession} />;
   if (session.left) {
     return (
-      <main className="home message">
-        <h1>Room {code}</h1>
-        <p>Disconnected from the room.</p>
+      <Message title={`Room ${code}`} text="Disconnected from the room.">
         <Link className="button" href="/">
           Back to start
         </Link>
-      </main>
+      </Message>
     );
   }
   const roster = session.roster;
-  if (!roster) return <main className="home message"><p>Connecting…</p></main>;
+  if (!roster) {
+    return (
+      <Message title="Connecting…">
+        <span className="spinner" aria-hidden />
+      </Message>
+    );
+  }
   if (roster.phase === "lobby") return <Lobby session={session} roster={roster} code={code} onLeave={leave} />;
 
   return (
     <GameScreen makeDriver={() => createOnlineDriver(session)}>
-      <div className="game-chips">
-        <RoomChip code={code} players={roster.players.length} />
-        <LeaveButton onLeave={leave} />
-      </div>
+      <RoomChip code={code} players={roster.players.length} />
+      <MicChip voice={session.voice} compact />
+      <LeaveButton onLeave={leave} />
     </GameScreen>
   );
 }
@@ -94,21 +97,24 @@ function LeaveButton({ onLeave }: { onLeave: () => void }) {
   const [asking, setAsking] = useState(false);
   if (!asking) {
     return (
-      <button type="button" className="room-chip" onClick={() => setAsking(true)}>
+      <button type="button" className="chip" onClick={() => setAsking(true)}>
+        <Icon name="leave" />
         Leave
       </button>
     );
   }
   return (
-    <span className="room-chip confirm">
-      Leave match?
-      <button type="button" onClick={onLeave}>
-        Yes
-      </button>
-      <button type="button" onClick={() => setAsking(false)}>
-        No
-      </button>
-    </span>
+    <div className="chip-confirm" role="group" aria-label="Leave match?">
+      <span>Leave match?</span>
+      <div className="chip-confirm-actions">
+        <button type="button" className="yes" onClick={onLeave}>
+          Leave
+        </button>
+        <button type="button" onClick={() => setAsking(false)}>
+          Stay
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -136,13 +142,11 @@ function JoinForm({ code, onJoined }: { code: string; onJoined: (s: Session) => 
 
   if (info === null) {
     return (
-      <main className="home message">
-        <h1>Room {code}</h1>
-        <p>This room doesn't exist or has closed.</p>
+      <Message title={`Room ${code}`} text="This room doesn't exist or has closed.">
         <Link className="button" href="/">
           Back to start
         </Link>
-      </main>
+      </Message>
     );
   }
   const full = info !== undefined && info.players.length >= info.maxPlayers;
@@ -160,10 +164,12 @@ function JoinForm({ code, onJoined }: { code: string; onJoined: (s: Session) => 
   }
 
   return (
-    <main className="home">
+    <main className="home join-page">
       <Logo small />
       <form className="panel join-panel" onSubmit={submit}>
-        <h2>Join room {code}</h2>
+        <h2>
+          Join room <span className="code-inline">{code}</span>
+        </h2>
         {info && (
           <div className="match-line">
             <span>{info.rounds > 1 ? `${info.rounds}-round tournament` : "Single match"}</span>
@@ -180,6 +186,19 @@ function JoinForm({ code, onJoined }: { code: string; onJoined: (s: Session) => 
           Back
         </Link>
       </form>
+    </main>
+  );
+}
+
+// A centred card for one-line states: connecting, room gone, disconnected.
+function Message({ title, text, children }: { title: string; text?: string; children?: ReactNode }) {
+  return (
+    <main className="home message">
+      <div className="panel message-card">
+        <h1>{title}</h1>
+        {text && <p>{text}</p>}
+        {children}
+      </div>
     </main>
   );
 }

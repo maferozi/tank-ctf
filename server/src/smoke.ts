@@ -1,8 +1,20 @@
 // End-to-end check against a running server: `npm run smoke -w server`.
 // Two bots go through the lobby, play, drop and rejoin, and leave.
 import assert from "node:assert/strict";
-import { Client } from "@colyseus/sdk";
-import { MSG, ROOM_NAME, type RoomInfo, type Roster, type Snapshot } from "@tank/shared";
+import { Client, type Room } from "@colyseus/sdk";
+import {
+  MSG,
+  VOICE_BURST,
+  VOICE_CONFIG_BURST,
+  ROOM_NAME,
+  SnapshotDecoder,
+  type RoomInfo,
+  type Roster,
+  type Snapshot,
+  type SnapshotMessage,
+  type VoiceConfig,
+  type VoiceMessage,
+} from "@tank/shared";
 import { BotButton } from "./botButton";
 
 const url = process.env.SERVER_URL ?? "ws://localhost:2567";
@@ -16,6 +28,17 @@ async function play(button: BotButton, ms: number) {
     await sleep(15);
   }
 }
+// Snapshots come as keyframes and deltas; decode them like the web client, asking for a
+// keyframe when a delta doesn't apply.
+function onSnapshots(room: Room, listener: (s: Snapshot) => void) {
+  const decoder = new SnapshotDecoder();
+  room.onMessage(MSG.snapshot, (msg: SnapshotMessage) => {
+    const snap = decoder.decode(msg);
+    if (snap) listener(snap);
+    else room.send(MSG.keyframe);
+  });
+  return decoder;
+}
 const teams = (r: Roster | undefined) => r?.players.map((p) => `${p.name}:${p.team}`).sort();
 
 // Round 1 on the open Arena, so the walking check below doesn't start against a wall.
@@ -25,13 +48,15 @@ assert.match(ann.roomId, /^[A-Z]{4}$/, "room id should be a 4-letter code");
 const annRosters: Roster[] = [];
 ann.onMessage(MSG.roster, (r: Roster) => annRosters.push(r));
 ann.onMessage(MSG.snapshot, () => {});
+ann.onMessage(MSG.voiceConfig, () => {});
 ann.send(MSG.ready);
 
 const bob = await new Client(url).joinById(ann.roomId, { name: "Bob", team: "blue" });
 const snaps: Snapshot[] = [];
-bob.onMessage(MSG.snapshot, (s: Snapshot) => snaps.push(s));
+const bobDecoder = onSnapshots(bob, (s) => snaps.push(s));
 const bobRosters: Roster[] = [];
 bob.onMessage(MSG.roster, (r: Roster) => bobRosters.push(r));
+bob.onMessage(MSG.voiceConfig, () => {});
 bob.send(MSG.ready);
 await sleep(300);
 
@@ -102,6 +127,8 @@ await play(annButton, 100);
 const moved = Math.hypot(annTank().x - start.x, annTank().y - start.y);
 assert.ok(moved > 30, `holding should walk, moved ${moved.toFixed(1)} px`);
 const lastAck = snaps.at(-1)!.acks[ann.sessionId] ?? 0;
+assert.equal(bobDecoder.failures, 0, "every delta applied");
+assert.ok(bobDecoder.keyframes >= 1 && bobDecoder.deltas > bobDecoder.keyframes * 10, "mostly deltas after the first keyframe");
 assert.ok(lastAck > 40, `server should ack Ann's samples, last ack ${lastAck}`);
 
 // Bob's page "refreshes": the connection drops without leaving. His seat and soldier wait.
@@ -111,15 +138,20 @@ bob.reconnection.enabled = false;
 await bob.leave(false);
 await sleep(300);
 assert.equal(annRosters.at(-1)?.players.find((p) => p.id === bobId)?.away, true, "Bob shows as away");
+// Ann starts decoding mid-stream: her first delta has no base, so she asks for a keyframe.
 const annSnaps: Snapshot[] = [];
-ann.onMessage(MSG.snapshot, (s: Snapshot) => annSnaps.push(s));
-await sleep(100);
+const annDecoder = onSnapshots(ann, (s) => annSnaps.push(s));
+await sleep(250);
+assert.ok(annDecoder.failures >= 1 && annDecoder.keyframes >= 1, "a client without a base gets a keyframe on request");
 assert.ok(annSnaps.at(-1)?.state.tanks.some((t) => t.id === bobId), "Bob's soldier stays in the game");
 
 const bobAgain = await new Client(url).reconnect(token);
 bobAgain.onMessage(MSG.roster, () => {});
-bobAgain.onMessage(MSG.snapshot, () => {});
+const bobAgainSnaps: Snapshot[] = [];
+const bobAgainDecoder = onSnapshots(bobAgain, (s) => bobAgainSnaps.push(s));
 await sleep(300);
+assert.equal(bobAgainDecoder.failures, 0, "a reconnected player starts with a keyframe");
+assert.ok(bobAgainSnaps.length > 5 && bobAgainDecoder.deltas > 0, "and then gets deltas");
 assert.equal(bobAgain.sessionId, bobId, "rejoined as the same player");
 const back = annRosters.at(-1)?.players.find((p) => p.id === bobId);
 assert.deepEqual([back?.away, back?.team], [false, "blue"], "back on his team");
@@ -132,8 +164,77 @@ const afterAnn = (await (await fetch(`${http}/rooms/${roomId}`)).json()) as Room
 assert.deepEqual(afterAnn.players.map((p) => p.name), ["Bob"]);
 await bobAgain.leave();
 
+// Voice signaling relay, in a room of its own: Vee (red), Wes and Xan (blue).
+const vee = await new Client(url).create(ROOM_NAME, { name: "Vee", team: "red" });
+const wes = await new Client(url).joinById(vee.roomId, { name: "Wes", team: "blue" });
+const xan = await new Client(url).joinById(vee.roomId, { name: "Xan", team: "blue" });
+const voiceIn = new Map<string, VoiceMessage[]>();
+const configs: VoiceConfig[] = [];
+const veeRosters: Roster[] = [];
+for (const bot of [vee, wes, xan]) {
+  const inbox: VoiceMessage[] = [];
+  voiceIn.set(bot.sessionId, inbox);
+  bot.onMessage(MSG.voice, (m: VoiceMessage) => inbox.push(m));
+  bot.onMessage(MSG.voiceConfig, (c: VoiceConfig) => configs.push(c));
+  bot.onMessage(MSG.roster, (r: Roster) => bot === vee && veeRosters.push(r));
+  bot.onMessage(MSG.snapshot, () => {});
+  bot.send(MSG.ready);
+}
+const inbox = (bot: Room) => voiceIn.get(bot.sessionId)!;
+const say = (from: Room, to: Room, extra: Record<string, unknown> = {}) =>
+  from.send(MSG.voice, { to: to.sessionId, kind: "ice", data: { epoch: 1, candidate: null }, ...extra });
+vee.send(MSG.voiceConfig);
+await sleep(300);
+const config = configs.at(-1);
+assert.ok(config, "the server sends the ICE config on join and when asked");
+const urls = config.iceServers.flatMap((s) => s.urls);
+assert.ok(urls.includes("stun:stun.l.google.com:19302") && urls.includes("stun:stun.cloudflare.com:3478"), "STUN is always there");
+
+// Lobby: red and blue can talk; the sender is stamped by the server.
+say(vee, wes, { from: xan.sessionId });
+await sleep(200);
+assert.equal(inbox(wes).length, 1, "lobby: red reaches blue");
+assert.equal(inbox(wes)[0]!.from, vee.sessionId, "a forged from is replaced by the real sender");
+assert.equal(inbox(wes)[0]!.kind, "ice");
+assert.equal(inbox(xan).length, 0, "only the addressee gets it");
+// Oversized and malformed messages are dropped.
+say(vee, wes, { kind: "offer", data: { epoch: 1, sdp: "x".repeat(18_000) } });
+say(vee, wes, { kind: "shout" });
+vee.send(MSG.voice, { to: "nobody", kind: "bye", data: { epoch: 1 } });
+say(vee, vee);
+await sleep(200);
+assert.equal(inbox(wes).length, 1, "oversized and malformed messages are dropped");
+assert.equal(inbox(vee).length, 0, "nobody talks to themselves");
+
+// Match: teams only.
+vee.send(MSG.start);
+await sleep(300);
+assert.equal(veeRosters.at(-1)?.phase, "playing");
+say(vee, wes);
+say(wes, xan, { kind: "bye", data: { epoch: 2 } });
+await sleep(200);
+assert.equal(inbox(wes).length, 1, "match: red can't reach blue");
+assert.equal(inbox(xan).length, 1, "match: blue reaches blue");
+assert.equal(inbox(xan)[0]!.from, wes.sessionId);
+
+// Rate limit: a flood is cut to the burst allowance.
+for (let i = 0; i < VOICE_BURST + 200; i++) say(wes, xan);
+await sleep(500);
+const flood = inbox(xan).length - 1;
+assert.ok(flood >= VOICE_BURST - 10 && flood <= VOICE_BURST + 40, `a flood of ${VOICE_BURST + 200} is cut to about the burst, got ${flood}`);
+// Config requests are rate-limited too.
+const configsBefore = configs.length;
+for (let i = 0; i < 30; i++) wes.send(MSG.voiceConfig);
+await sleep(400);
+const answered = configs.length - configsBefore;
+assert.ok(answered >= 1 && answered <= VOICE_CONFIG_BURST + 1, `30 config requests get at most the burst, got ${answered}`);
+const voiceRoom = vee.roomId;
+await Promise.all([vee.leave(), wes.leave(), xan.leave()]);
+
 console.log(
   `smoke ok: room ${roomId}, lobby (host, team switch, host move, start rules), ${rate} snapshots/s, ` +
-    `teams locked in play, tap fired, walked ${moved.toFixed(0)} px, dropped player rejoined as the same soldier`,
+    `teams locked in play, tap fired, walked ${moved.toFixed(0)} px, dropped player rejoined as the same soldier, ` +
+    `${bobDecoder.keyframes} keyframes + ${bobDecoder.deltas} deltas decoded; ` +
+    `voice relay in ${voiceRoom}: lobby open, match team-only, from stamped, oversized dropped, flood cut to ${flood}`,
 );
 process.exit(0);

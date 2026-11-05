@@ -6,6 +6,9 @@ export interface Body {
   shape: "circle" | "box";
   size: number; // radius for a circle, half-width for a box
   mass: number;
+  // A walking soldier's heading (unit vector). It pushes boxes straight along the face it
+  // walks into (see pushFace) instead of along the nearest-point normal.
+  heading?: { x: number; y: number };
 }
 
 export interface Contact {
@@ -68,9 +71,38 @@ function hitsWall(body: Body, map: GameMap, x: number, y: number): boolean {
 export function contact(a: Body, b: Body): Contact | null {
   if (a.shape === "circle" && b.shape === "circle") return circleCircle(a, b);
   if (a.shape === "box" && b.shape === "box") return boxBox(a, b);
-  if (a.shape === "circle") return circleBox(a, b);
-  const c = circleBox(b, a);
+  if (a.shape === "circle") return walkerBox(a, b);
+  const c = walkerBox(b, a);
   return c && { nx: -c.nx, ny: -c.ny, depth: c.depth };
+}
+
+function walkerBox(circle: Body, box: Body): Contact | null {
+  const c = circleBox(circle, box);
+  if (!c || !circle.heading) return c;
+  return pushFace(circle, box, circle.heading.x, circle.heading.y) ?? c;
+}
+
+// How far off the face's centre line (beyond the box's half-width, as a share of the
+// walker's radius) a walker still pushes the face square on rather than glancing off the corner.
+const FACE_BAND = 0.5;
+
+// A circle walking along (hx, hy) into a box pushes the face across its heading's main axis,
+// straight along that axis, as long as its centre is in front of that face and no further
+// off the face's centre line than half the box plus FACE_BAND of its radius. Hitting near a
+// corner this way still moves the box straight forward instead of spinning the contact
+// normal around the corner (which pushed boxes sideways and let the walker slide round them).
+// Returns null when the circle isn't touching the box or is outside that band.
+export function pushFace(circle: Body, box: Body, hx: number, hy: number): Contact | null {
+  if (!circleBox(circle, box)) return null;
+  const alongX = Math.abs(hx) >= Math.abs(hy);
+  const s = sign(alongX ? hx : hy);
+  const ahead = s * (alongX ? box.pos.x - circle.pos.x : box.pos.y - circle.pos.y);
+  const off = Math.abs(alongX ? box.pos.y - circle.pos.y : box.pos.x - circle.pos.x);
+  // Centre already past the face plane, or beside the box rather than in front of it.
+  if (ahead < box.size || off > box.size + circle.size * FACE_BAND) return null;
+  const depth = circle.size + box.size - ahead;
+  if (depth <= 0) return null;
+  return alongX ? { nx: s, ny: 0, depth } : { nx: 0, ny: s, depth };
 }
 
 function circleCircle(a: Body, b: Body): Contact | null {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Icon } from "./Icon";
 
 // Share the invite link (share sheet on phones, clipboard elsewhere).
 function useShare(code: string) {
@@ -24,18 +25,43 @@ function useShare(code: string) {
 // Room code and player count over the game. Tap to share the invite link.
 export function RoomChip({ code, players }: { code: string; players: number }) {
   const { copied, share } = useShare(code);
+  const label = copied ? "Link copied" : `Room ${code}, ${players} ${players === 1 ? "player" : "players"}. Share invite link`;
   return (
-    <button type="button" className="room-chip" onClick={share}>
-      {copied ? "Link copied" : `${code}, ${players} ${players === 1 ? "player" : "players"}`}
-    </button>
+    <>
+      <button type="button" className="chip room-chip" onClick={share} aria-label={label}>
+        {copied ? (
+          "Link copied"
+        ) : (
+          <>
+            <span className="room-chip-code">{code}</span>
+            <Icon name="people" />
+            {players}
+          </>
+        )}
+      </button>
+      {/* Announces the copy: a focused button's label change isn't always read out. */}
+      <span aria-live="polite" style={VISUALLY_HIDDEN}>
+        {copied ? "Link copied" : ""}
+      </span>
+    </>
   );
 }
+
+const VISUALLY_HIDDEN = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+  whiteSpace: "nowrap",
+} as const;
 
 // Lobby header: the room code as big letter tiles, tap to share.
 export function RoomCode({ code }: { code: string }) {
   const { copied, share } = useShare(code);
   return (
     <div className="room-code">
+      <span className="eyebrow">Room code</span>
       <h1 className="code-tiles" aria-label={`Room ${code}`}>
         {code.split("").map((ch, i) => (
           <span key={i} className="code-tile">
@@ -44,7 +70,8 @@ export function RoomCode({ code }: { code: string }) {
         ))}
       </h1>
       <button type="button" className="button small secondary" onClick={share}>
-        {copied ? "Link copied" : "Share invite link"}
+        <Icon name="share" />
+        {copied ? "Link copied" : "Invite friends"}
       </button>
     </div>
   );

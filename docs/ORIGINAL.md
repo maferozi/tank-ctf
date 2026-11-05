@@ -14,7 +14,7 @@ Video pixels are converted to our units with **1 tile (40 px) ≈ 20.6 video px,
 1.9**:
 
 - The original's floor checker cells are ~10.3 video px; walls are 2 cells thick; the playfield is
-  ~52 × 37 cells, so ~26 × 18.5 tiles of 2 cells. Ours are 28 × 18.
+  ~52 × 37 cells, so ~26 × 18.5 tiles of 2 cells. Ours are 26 × 18 (since 5 Nov 2026; 28 × 18 before).
 - Cross-check: the soldier body is ~16 video px across; × 1.9 gives a radius of ~15 px (ours 14).
 
 Numbers in our units carry about ±5% from this factor. Ratios between two measurements don't.
@@ -58,7 +58,23 @@ Numbers in our units carry about ±5% from this factor. Ratios between two measu
 | `BULLET_SPEED` | 440 | 620 |
 | `BULLET_RANGE` | 320 | 410 |
 | `RAPID_FIRE_MS` | 250 (snap back to one line) | 0 (shots follow the wobbling gun, so they fan out) |
-| `UNLIMITED_AMMO` | — (6 rounds, 1.5 s reload) | true; set false to bring the magazine back |
-| `CRATE_BREAKS` | — | true: one bullet breaks a crate (beds don't break) |
+| `UNLIMITED_AMMO` | — (6 rounds, 1.5 s reload) | false again (5 Nov 2026, players' call): the 6-round magazine is back. The original never runs dry; set true for that |
+| `CRATE_BREAKS` | — | false (5 Nov 2026, players' call): crates stay solid so they can be pushed to block lanes. The original breaks them; set true for that |
 
-Not changed: respawn (already 8 s), recoil (none in either), map sizes and layouts (next step).
+Not changed: respawn (already 8 s), recoil (none in either).
+
+## Implemented (5 Nov 2026)
+- **Map shape and layouts.** All maps are 26 × 18 tiles, the original's playfield inside a
+  1-tile wall ring. Garden, Office, Crossroads, Open Field and Classroom were rebuilt by laying
+  a 26 × 18 grid over frames of the match recording and counting walls; the other four maps
+  were redesigned at the new size. The two teams' halves are mirrored or turned half a turn, as
+  in the original (respawn squares in opposite corners on the turned maps).
+- **Desks** (`D`): pushable and they stop bullets, as on the Office stage. Ours never break.
+- **Bushes** (`*`): decoration; bullets fly over them, as in the warm-up. Soldiers walk through.
+- **Bullet look**: a small ball with a light streak in the team's colour, bursting into bits on
+  walls, crates, soldiers and at the end of its range, as in the zoomed strips.
+- **Respawn ring**: a ring closes in on a soldier when they respawn.
+- **Power-ups** appear at random times instead of on a fixed timer (durations weren't measured).
+
+Still different on purpose: crates don't break (`CRATE_BREAKS` off); the flare fires 4 ways
+every 2 s (the original's burst fires 8 ways every ~3.2 s); the shield stops 3 bullets.

@@ -1,11 +1,14 @@
-// The game title between a red and a blue flag.
+// The game title between a red and a blue flag, with a small subtitle under it.
 export function Logo({ small = false }: { small?: boolean }) {
   return (
-    <h1 className={small ? "logo small" : "logo"}>
-      <Pennant team="red" />
-      <span className="logo-text">Tank CTF</span>
-      <Pennant team="blue" />
-    </h1>
+    <div className={small ? "logo small" : "logo"}>
+      <h1 className="logo-title">
+        <Pennant team="red" />
+        <span className="logo-text">Tank CTF</span>
+        <Pennant team="blue" />
+      </h1>
+      {!small && <p className="logo-sub">Online capture the flag</p>}
+    </div>
   );
 }
 

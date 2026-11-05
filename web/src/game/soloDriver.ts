@@ -4,6 +4,7 @@ import {
   TICK_MS,
   addTank,
   cloneState,
+  copyInto,
   createState,
   getMap,
   step,
@@ -17,7 +18,7 @@ const MAX_FRAME_MS = 250; // avoid a spiral of catch-up ticks after a tab switch
 export function createSoloDriver(targets: number, mapId = DEFAULT_MAP.id): Driver {
   const map = getMap(mapId);
   const localId = "you";
-  const state = createState(map);
+  const state = createState(map, 1, undefined, (Math.random() * 0x7fffffff) | 0); // fresh power-up rolls each game
   addTank(state, map, localId, "red");
   for (let i = 0; i < targets; i++) addTank(state, map, `target-${i}`, "blue");
   // Dev-only hook so the sim can be inspected from the browser console.
@@ -36,7 +37,7 @@ export function createSoloDriver(targets: number, mapId = DEFAULT_MAP.id): Drive
       last = now;
       const events: GameEvent[] = [];
       while (acc >= TICK_MS) {
-        prev = cloneState(state);
+        prev = copyInto(prev, state); // one reused buffer, no garbage per tick
         step(state, getMap(state.mapId), { [localId]: button.consume() }, { holdMs: DEFAULT_HOLD_MS });
         events.push(...state.events);
         acc -= TICK_MS;

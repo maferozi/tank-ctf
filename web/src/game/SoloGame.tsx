@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Icon } from "@/net/Icon";
 import { GameScreen } from "./GameScreen";
 import { createSoloDriver } from "./soloDriver";
 
@@ -10,11 +11,10 @@ const TARGETS = 3; // spinning blue soldiers to practise on
 export function SoloGame({ mapId }: { mapId?: string }) {
   return (
     <GameScreen makeDriver={() => createSoloDriver(TARGETS, mapId)}>
-      <div className="game-chips">
-        <Link href="/" className="room-chip">
-          Menu
-        </Link>
-      </div>
+      <Link href="/" className="chip">
+        <Icon name="back" />
+        Menu
+      </Link>
     </GameScreen>
   );
 }

@@ -7,6 +7,7 @@ import {
   BULLET_RANGE,
   BULLET_SPEED,
   CRATE_MASS,
+  CRATE_BREAKS,
   CRATE_SIZE,
   DRIVE_RAMP_MS,
   DRIVE_SPEED,
@@ -15,11 +16,18 @@ import {
   FLARE_MS,
   IDLE_TANK_BRAKE,
   MAX_AMMO,
+  DESK_MASS,
+  DESK_SIZE,
   POWER_BOX_SIZE,
-  POWER_RESPAWN_MS,
+  POWER_RESPAWN_MAX_MS,
+  POWER_RESPAWN_MIN_MS,
+  POWER_START_MAX_MS,
+  POWER_START_MIN_MS,
+  PUSH_GRIP,
   RAPID_FIRE_MS,
   RELOAD_MS,
   RESPAWN_MS,
+  SHIELD_HITS,
   SHIELD_MS,
   SPEED_BOOST,
   SPIN_PAUSE_MS,
@@ -30,7 +38,7 @@ import {
 import { boxHitsWall, DEFAULT_MAP, parseMap } from "./map";
 import { getMap } from "./maps";
 import { contact } from "./physics";
-import { addTank, createState, givePower, resetRound, step, type TankInput } from "./sim";
+import { addTank, createMatchState, createState, givePower, resetRound, step, type TankInput } from "./sim";
 
 const config = { holdMs: 60 };
 const map = DEFAULT_MAP;
@@ -121,6 +129,7 @@ test("rapid tapping fans shots out a little around one line", () => {
   tank.angle = Math.PI; // away from the 0 / 2π wrap
   const angles: number[] = [];
   for (let tap = 0; tap < 12; tap++) {
+    tank.ammo = MAX_AMMO; // this test is about the spread, not the magazine
     step(state, map, { p1: { held: false, pressed: true } }, config);
     const b = state.bullets.at(-1);
     if (b && b.id === state.nextBulletId - 1) angles.push(Math.atan2(b.vy, b.vx) + (b.vy < 0 ? Math.PI * 2 : 0));
@@ -434,10 +443,10 @@ test("a crate settles again after it is left alone", () => {
 
 test("a crate stops at a wall and the tank cannot push through it", () => {
   const { state, tank, crate } = crateAhead();
-  // Drive along row 7 towards the right outer wall (x = 27 * 40 = 1080).
+  // Drive along row 7 towards the right outer wall (x = 25 * 40 = 1000).
   for (let i = 0; i < 60 * 40; i++) step(state, map, { t: hold }, config);
-  assert.ok(crate.x + CRATE_SIZE / 2 <= 1080 + 1e-6, "crate went into the wall");
-  assert.ok(crate.x + CRATE_SIZE / 2 > 1080 - 1, "crate should reach the wall");
+  assert.ok(crate.x + CRATE_SIZE / 2 <= 1000 + 1e-6, "crate went into the wall");
+  assert.ok(crate.x + CRATE_SIZE / 2 > 1000 - 1, "crate should reach the wall");
   assert.ok(tank.x + TANK_RADIUS <= crate.x - CRATE_SIZE / 2 + 1e-6, "tank overlaps the crate");
 });
 
@@ -456,7 +465,26 @@ test("crates block bullets", () => {
   assert.equal(state.bullets.length, 0);
 });
 
-test("a crate breaks when shot, a bed doesn't, and crates are back next round", () => {
+test("with CRATE_BREAKS off, a shot crate stays put and stops the bullet", { skip: CRATE_BREAKS && "CRATE_BREAKS is on" }, () => {
+  const state = createState(map);
+  const crate = state.crates.find((c) => !c.bed && !c.desk)!;
+  const tank = addTank(state, map, "t", "red");
+  tank.x = crate.x - CRATE_SIZE / 2 - TANK_RADIUS - 30;
+  tank.y = crate.y;
+  tank.angle = 0;
+  const count = state.crates.length;
+  const at = { x: crate.x, y: crate.y };
+  step(state, map, { t: tap }, config);
+  for (let i = 0; i < 20; i++) {
+    step(state, map, {}, config);
+    assert.ok(!state.events.some((e) => e.type === "crateBreak"), "no crate may break");
+  }
+  assert.equal(state.crates.length, count);
+  assert.deepEqual({ x: crate.x, y: crate.y }, at, "a shot doesn't move the crate");
+  assert.equal(state.bullets.length, 0, "the bullet stops at the crate");
+});
+
+test("a crate breaks when shot, a bed doesn't, and crates are back next round", { skip: !CRATE_BREAKS && "CRATE_BREAKS is off" }, () => {
   const state = createState(map);
   const crate = state.crates.find((c) => !c.bed)!;
   const tank = addTank(state, map, "t", "red");
@@ -506,7 +534,7 @@ test("driving into a power box gives a power and the box comes back later", () =
   assert.equal(got, "t");
   assert.ok(tank.shieldMs > 0 || tank.speedMs > 0 || tank.flareMs > 0);
   assert.equal(box.respawnMs > 0, true);
-  for (let i = 0; i < ticks(POWER_RESPAWN_MS) + 1; i++) step(state, map, {}, config);
+  for (let i = 0; i < ticks(POWER_RESPAWN_MAX_MS) + 1; i++) step(state, map, {}, config);
   assert.equal(box.respawnMs, 0);
 });
 
@@ -559,7 +587,7 @@ test("a pushed power box comes back at its home spot", () => {
   for (let i = 0; i < 5 && box.respawnMs === 0; i++) step(state, map, { t: hold }, config);
   assert.ok(box.respawnMs > 0);
   tank.x = 200; // out of the way
-  for (let i = 0; i < ticks(POWER_RESPAWN_MS) + 1; i++) step(state, map, {}, config);
+  for (let i = 0; i < ticks(POWER_RESPAWN_MAX_MS) + 1; i++) step(state, map, {}, config);
   assert.equal(box.respawnMs, 0);
   assert.equal(box.x, box.homeX);
   assert.equal(box.y, box.homeY);
@@ -587,7 +615,7 @@ test("random power rolls cover every kind", () => {
   assert.deepEqual([...kinds].sort(), ["flare", "shield", "speed"]);
 });
 
-test("a shield blocks bullets for SHIELD_MS, then runs out", () => {
+test("a shield blocks a bullet and runs out after SHIELD_MS", () => {
   const state = createState();
   const shooter = addTank(state, map, "a", "red");
   const target = addTank(state, map, "b", "blue");
@@ -771,4 +799,234 @@ test("a pushed body still shields its team where it ends up", () => {
     step(state, map, {}, config);
   }
   assert.equal(target.alive, true);
+});
+
+// Pushing: a soldier in the open room, facing `angle`, with a crate (or desk / bed) just
+// ahead along x, `off` px off its centre line.
+function pushSetup(angle: number, off: number, kind: "crate" | "desk" | "bed" = "crate") {
+  const state = createState();
+  const tank = addTank(state, OPEN_ROOM, "t", "red");
+  tank.x = 200;
+  tank.y = 360;
+  tank.angle = angle;
+  tank.cooldownMs = 1e9; // walk in without firing: a shot would break a crate
+  const size = kind === "bed" ? BED_SIZE : kind === "desk" ? DESK_SIZE : CRATE_SIZE;
+  const box = { id: 1, x: tank.x + TANK_RADIUS + size / 2 + 2, y: 360 + off, pushMs: 0, bed: kind === "bed", desk: kind === "desk" };
+  state.crates.push(box);
+  return { state, tank, box, size };
+}
+
+test("pushing a crate off-centre, near its corner, moves it straight forward", () => {
+  // Centre line 20 px off: the soldier's edge only overlaps the crate's face by 10 px.
+  const { state, tank, box } = pushSetup(0, CRATE_SIZE / 2 + 4);
+  const x0 = box.x;
+  const y0 = box.y;
+  const ty = tank.y;
+  for (let i = 0; i < 120; i++) step(state, OPEN_ROOM, { t: hold }, config);
+  assert.ok(box.x - x0 > 50, `crate should move forward, moved ${(box.x - x0).toFixed(1)}`);
+  assert.ok(Math.abs(box.y - y0) < 1e-6, `crate drifted sideways ${(box.y - y0).toFixed(2)}`);
+  assert.ok(Math.abs(tank.y - ty) < 1e-6, "soldier must not slide round the corner");
+  assert.ok(tank.x < box.x, "soldier stays behind the crate");
+});
+
+test("a soldier who only clips the corner still glances off and walks past", () => {
+  // Further off than above: the soldier's edge overlaps the crate by just 2 px.
+  const { state, tank, box } = pushSetup(0, CRATE_SIZE / 2 + TANK_RADIUS - 2);
+  for (let i = 0; i < 120; i++) step(state, OPEN_ROOM, { t: hold }, config);
+  assert.ok(tank.x > box.x + 10, "a glancing soldier walks past the corner");
+});
+
+test("a slightly diagonal heading pushes along the main axis and the soldier grips the face", () => {
+  const angle = 0.4; // ~23 degrees: under the PUSH_GRIP limit
+  assert.ok(Math.tan(angle) < PUSH_GRIP);
+  const { state, tank, box } = pushSetup(angle, 0);
+  for (let i = 0; i < 20; i++) step(state, OPEN_ROOM, { t: hold }, config); // reach it
+  const x0 = box.x;
+  const y0 = box.y;
+  const ty = tank.y;
+  for (let i = 0; i < 90; i++) step(state, OPEN_ROOM, { t: hold }, config);
+  assert.ok(box.x - x0 > 40, `crate should move along x, moved ${(box.x - x0).toFixed(1)}`);
+  assert.ok(Math.abs(box.y - y0) < 1e-6, "crate moves along x only");
+  assert.ok(Math.abs(tank.y - ty) < 1e-6, "soldier grips the face instead of sliding along it");
+});
+
+test("a steep heading pushes along x but slides along the face", () => {
+  const angle = 0.7; // ~40 degrees: over the PUSH_GRIP limit, still mostly along x
+  assert.ok(Math.tan(angle) > PUSH_GRIP);
+  const { state, tank, box } = pushSetup(angle, 0);
+  for (let i = 0; i < 20; i++) step(state, OPEN_ROOM, { t: hold }, config); // reach it
+  const y0 = box.y;
+  const ty = tank.y;
+  for (let i = 0; i < 20; i++) step(state, OPEN_ROOM, { t: hold }, config);
+  assert.ok(tank.y - ty > 5, "soldier slides along the face");
+  assert.ok(Math.abs(box.y - y0) < 1e-6, "the crate is still pushed along x only");
+});
+
+test("a soldier beside a crate's corner, walking away from it, slips past instead of sticking", () => {
+  // Crate flush against the right wall; the soldier touches it 5 px past its top edge and
+  // heads up and to the right, away from it.
+  const { state, tank, box } = pushSetup(-0.35, 0);
+  box.x = 1064;
+  box.y = 360;
+  tank.x = box.x - CRATE_SIZE / 2 - TANK_RADIUS;
+  tank.y = box.y - CRATE_SIZE / 2 - 5;
+  const x0 = box.x;
+  const y0 = tank.y;
+  for (let i = 0; i < 60; i++) step(state, OPEN_ROOM, { t: hold }, config);
+  assert.ok(y0 - tank.y > 20, `soldier should slip up past the corner, moved ${(y0 - tank.y).toFixed(1)}`);
+  assert.equal(box.x, x0, "the wall-pinned crate stays put");
+});
+
+test("beside an unpinned crate's corner, walking away does not drag the crate by its corner", () => {
+  const { state, tank, box } = pushSetup(-0.35, 0);
+  tank.y = box.y - CRATE_SIZE / 2 - 5;
+  tank.x = box.x - CRATE_SIZE / 2 - TANK_RADIUS;
+  const x0 = box.x;
+  for (let i = 0; i < 120; i++) step(state, OPEN_ROOM, { t: hold }, config);
+  assert.ok(box.x - x0 < 10, `crate dragged ${(box.x - x0).toFixed(1)} px by its corner`);
+});
+
+test("walking mostly along y pushes a crate along y", () => {
+  const { state, tank, box } = pushSetup(Math.PI / 2 - 0.2, 0);
+  box.x = tank.x + 10; // below the soldier, a bit to the right of its path
+  box.y = tank.y + TANK_RADIUS + CRATE_SIZE / 2 + 2;
+  const x0 = box.x;
+  const y0 = box.y;
+  for (let i = 0; i < 90; i++) step(state, OPEN_ROOM, { t: hold }, config);
+  assert.ok(box.y - y0 > 30, `crate should move down, moved ${(box.y - y0).toFixed(1)}`);
+  assert.ok(Math.abs(box.x - x0) < 1e-6, "crate moves along y only");
+});
+
+test("a desk is a heavy, sticky, one-tile block: slides at its weight's speed", () => {
+  const { state, box } = pushSetup(0, 0, "desk");
+  for (let i = 0; i < 75; i++) step(state, OPEN_ROOM, { t: hold }, config);
+  const x0 = box.x;
+  for (let i = 0; i < 15; i++) step(state, OPEN_ROOM, { t: hold }, config);
+  const steady = (DRIVE_SPEED / (1 + DESK_MASS)) * 0.25;
+  assert.ok(Math.abs(box.x - x0 - steady) < 1, `desk moved ${(box.x - x0).toFixed(2)}, expected ~${steady.toFixed(2)}`);
+});
+
+test("a desk stops bullets and never breaks", () => {
+  const { state, tank, box } = pushSetup(0, 0, "desk");
+  tank.cooldownMs = 0;
+  const target = addTank(state, OPEN_ROOM, "enemy", "blue");
+  for (let shot = 0; shot < 3; shot++) {
+    tank.cooldownMs = 0;
+    step(state, OPEN_ROOM, { t: tap }, config);
+    for (let i = 0; i < 30; i++) {
+      target.x = box.x + 80;
+      target.y = box.y;
+      step(state, OPEN_ROOM, {}, config);
+      assert.equal(state.events.some((e) => e.type === "crateBreak"), false);
+    }
+  }
+  assert.equal(state.crates.length, 1);
+  assert.equal(target.alive, true);
+  assert.equal(state.bullets.length, 0);
+});
+
+test("power boxes start each round hidden and appear after a random start delay", () => {
+  const state = createState(map);
+  assert.ok(state.powerBoxes.length > 0);
+  for (const p of state.powerBoxes) {
+    assert.ok(p.respawnMs >= POWER_START_MIN_MS && p.respawnMs <= POWER_START_MAX_MS, `start delay ${p.respawnMs}`);
+  }
+  assert.ok(new Set(state.powerBoxes.map((p) => p.respawnMs)).size > 1, "each box rolls its own delay");
+  for (let i = 0; i < ticks(POWER_START_MAX_MS) + 1; i++) step(state, map, {}, config);
+  for (const p of state.powerBoxes) assert.equal(p.respawnMs, 0);
+  resetRound(state, map);
+  for (const p of state.powerBoxes) assert.ok(p.respawnMs >= POWER_START_MIN_MS, "hidden again next round");
+});
+
+test("a taken power box comes back after a random delay inside the respawn range", () => {
+  const { state, tank, box } = powerBoxNearby();
+  const delays: number[] = [];
+  for (let i = 0; i < 20; i++) {
+    box.respawnMs = 0;
+    box.x = tank.x; // overlapping: taken on the next tick
+    tank.shieldMs = tank.speedMs = tank.flareMs = 0;
+    step(state, map, {}, config);
+    delays.push(box.respawnMs);
+  }
+  for (const ms of delays) assert.ok(ms >= POWER_RESPAWN_MIN_MS && ms <= POWER_RESPAWN_MAX_MS, `respawn delay ${ms}`);
+  assert.ok(new Set(delays).size > 5, "delays vary");
+});
+
+test("power-up rolls are deterministic: the same seed rolls the same delays and kinds", () => {
+  const rolls = () => {
+    const state = createState(map);
+    const tank = addTank(state, map, "t", "red");
+    const out: (string | number)[] = state.powerBoxes.map((p) => p.respawnMs);
+    const box = state.powerBoxes[0]!;
+    for (let i = 0; i < 10; i++) {
+      box.respawnMs = 0;
+      box.x = tank.x;
+      box.y = tank.y;
+      tank.shieldMs = tank.speedMs = tank.flareMs = 0;
+      step(state, map, {}, config);
+      for (const e of state.events) if (e.type === "power") out.push(e.kind);
+      out.push(box.respawnMs);
+    }
+    return out;
+  };
+  assert.deepEqual(rolls(), rolls());
+});
+
+test("each match's seed rolls its own power-box timings, and the seed travels in the state", () => {
+  const delays = (seed: number) => createMatchState(1, ["garden"], seed).powerBoxes.map((p) => p.respawnMs);
+  assert.deepEqual(delays(12345), delays(12345), "same seed, same rolls");
+  const seen = new Set([1, 2, 3, 4, 5, 6, 7, 8].map((s) => delays(s * 7919).join(",")));
+  assert.ok(seen.size > 6, "different seeds roll different start delays");
+  assert.notEqual(createMatchState(1, undefined, 42).rng, createMatchState(1, undefined, 43).rng);
+});
+
+// Red shooter at x=500 facing right, a shielded blue target at x=600.
+function shieldDuel() {
+  const state = createState();
+  const shooter = addTank(state, map, "a", "red");
+  const target = addTank(state, map, "b", "blue");
+  givePower(state, target, "shield");
+  const shoot = () => {
+    shooter.x = 500;
+    shooter.y = 300;
+    shooter.angle = 0;
+    shooter.cooldownMs = 0;
+    const events: string[] = [];
+    step(state, map, { a: tap }, config);
+    for (let i = 0; i < 20; i++) {
+      target.x = 600;
+      target.y = 300;
+      step(state, map, {}, config);
+      for (const e of state.events) events.push(e.type);
+    }
+    return events;
+  };
+  return { state, target, shoot };
+}
+
+test("a shield stops SHIELD_HITS bullets; the last one pops it with shieldBreak", () => {
+  const { target, shoot } = shieldDuel();
+  assert.equal(target.shieldHits, SHIELD_HITS);
+  for (let hit = 1; hit < SHIELD_HITS; hit++) {
+    const events = shoot();
+    assert.ok(events.includes("shieldHit") && !events.includes("shieldBreak"));
+    assert.equal(target.shieldHits, SHIELD_HITS - hit);
+    assert.ok(target.shieldMs > 0);
+  }
+  const last = shoot();
+  assert.ok(last.includes("shieldBreak") && !last.includes("shieldHit"));
+  assert.equal(target.alive, true, "the popping bullet is stopped too");
+  assert.equal(target.shieldMs, 0);
+  assert.equal(target.shieldHits, 0);
+  shoot();
+  assert.equal(target.alive, false, "no shield left, so the next shot kills");
+});
+
+test("a shield lasts SHIELD_MS at most, even with hits left", () => {
+  const { state, target, shoot } = shieldDuel();
+  for (let i = 0; i < ticks(SHIELD_MS); i++) step(state, map, {}, config);
+  assert.equal(target.shieldMs, 0);
+  assert.equal(target.shieldHits, 0);
+  shoot();
+  assert.equal(target.alive, false);
 });

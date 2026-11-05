@@ -6,6 +6,7 @@ import {
   CARRIER_SPEED,
   DRIVE_RAMP_MS,
   DRIVE_SPEED,
+  FLAG_RADIUS,
   FLAG_RETURN_MS,
   SPAWN_PAD_SIZE,
   TANK_RADIUS,
@@ -226,6 +227,31 @@ test("a sliding body stops at a wall", () => {
   assert.equal(t.vx, 0);
 });
 
+test("a flag is only taken when the soldier reaches it, not by brushing past nearby", () => {
+  const { state, red, blueFlag } = setup();
+  red.x = blueFlag.homeX - (TANK_RADIUS + FLAG_RADIUS) - 1;
+  red.y = blueFlag.homeY;
+  run(state, 1);
+  assert.equal(blueFlag.carrier, null, "one px short of touching");
+  red.x += 2;
+  run(state, 1);
+  assert.equal(blueFlag.carrier, red.id);
+});
+
+test("a carrier must stand on their flag stand to score, not just touch its edge", () => {
+  assert.ok(BASE_RADIUS <= TANK_RADIUS + FLAG_RADIUS, "scoring is no looser than touching a flag");
+  const { state, red, redFlag, blueFlag } = setup();
+  blueFlag.carrier = red.id;
+  blueFlag.atHome = false;
+  red.x = redFlag.homeX + BASE_RADIUS + 1;
+  red.y = redFlag.homeY;
+  run(state, 1);
+  assert.equal(state.winner, null);
+  red.x -= 2;
+  run(state, 1);
+  assert.equal(state.winner, "red");
+});
+
 // Every map: score at your own flag stand. The square is only where you respawn.
 test("a carrier scores at their own flag stand, not on their respawn square", () => {
   const classroom = getMap("classroom");
@@ -263,25 +289,25 @@ test("a shot soldier respawns on their team's square", () => {
 
 test("water blocks walking but bullets fly over it", () => {
   const garden = getMap("garden");
-  // The pool spans tiles 8..19 on rows 1..3. Stand just left of it on row 2, walk right.
+  // The pool spans tiles 8..17 on rows 1..3. Stand in the house below it on column 8, walk up.
   const state = createState(garden);
   const walker = addTank(state, garden, "w", "red");
-  walker.x = 7 * TILE - TANK_RADIUS - 1; // left edge of the pool is x = 8 * TILE
-  walker.y = 2.5 * TILE;
-  walker.angle = 0;
+  walker.x = 8.5 * TILE;
+  walker.y = 5 * TILE + TANK_RADIUS + 1;
+  walker.angle = -Math.PI / 2;
   for (let i = 0; i < 60; i++) step(state, garden, { w: hold }, config);
-  assert.ok(walker.x + TANK_RADIUS <= 8 * TILE + 1e-6, "walked into the water");
+  assert.ok(walker.y - TANK_RADIUS >= 4 * TILE - 1e-6, "walked into the water");
 
   const shot = createState(garden);
   const shooter = addTank(shot, garden, "s", "red");
   const target = addTank(shot, garden, "t", "blue");
-  shooter.x = 7.5 * TILE;
-  shooter.y = 2.5 * TILE;
-  shooter.angle = 0;
+  shooter.x = 8.5 * TILE;
+  shooter.y = 4.5 * TILE;
+  shooter.angle = -Math.PI / 2;
   step(shot, garden, { s: tap }, config);
   for (let i = 0; i < 40 && target.alive; i++) {
-    target.x = 13 * TILE; // standing in for someone across the pool
-    target.y = 2.5 * TILE;
+    target.x = 8.5 * TILE; // standing in for someone across the pool
+    target.y = 1.5 * TILE;
     step(shot, garden, {}, config);
   }
   assert.equal(target.alive, false, "the bullet crossed the water");

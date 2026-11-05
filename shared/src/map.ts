@@ -9,7 +9,7 @@ export interface Spawn {
 }
 
 // How a map is drawn (floor and wall art). Gameplay is the same for every theme.
-export type MapTheme = "arena" | "wood" | "grass" | "tiles";
+export type MapTheme = "arena" | "wood" | "grass" | "tiles" | "office";
 
 // What each tile is, for drawing: wall, water, wood floor (e.g. inside a house on a grass
 // map) or plain floor.
@@ -29,6 +29,8 @@ export interface GameMap {
   spawns: Record<Team, Spawn[]>; // the four spots on each team's respawn square
   crates: { x: number; y: number }[]; // starting centres of movable crates
   beds: { x: number; y: number }[]; // starting centres of beds (big movable blocks)
+  desks: { x: number; y: number }[]; // starting centres of desks (one-tile heavy movable blocks)
+  bushes: { x: number; y: number }[]; // bush tile centres: decoration only, walk and shoot through
   powerBoxes: { x: number; y: number }[]; // power-up box spots
   flags: Partial<Record<Team, { x: number; y: number }>>; // flag stands
   // Centre of each team's respawn square (2 x 2 tiles). Teams score at their own flag stand.
@@ -37,26 +39,30 @@ export interface GameMap {
 
 // '#' wall, '.' floor, 'X' movable crate, 'P' power-up box, 'r' / 'b' red / blue flag stand,
 // '1' / '2' red / blue respawn square (a 2 x 2 block), 'T' bed (each 2 x 2 block of T is
-// one bed), '~' water (blocks walking, not bullets), ',' wood floor.
+// one bed), 'D' desk (one-tile movable furniture that never breaks), '~' water (blocks
+// walking, not bullets), ',' wood floor, '*' bush (decoration: walk and shoot through it).
+
+// The classic: open lanes, two cover blocks per side and a long wall shielding each flag
+// from the middle, so attackers come round the top or bottom.
 const ARENA = [
-  "############################",
-  "#.............P............#",
-  "#.11....................22.#",
-  "#.11.....#........#.....22.#",
-  "#........#...XX...#........#",
-  "#....##..#...##...#..##....#",
-  "#....##.......##.....##....#",
-  "#.......X..........X.......#",
-  "#...#######..P...#######.b.#",
-  "#.r.#######......#######...#",
-  "#.......X..........X.......#",
-  "#....##.....##.......##....#",
-  "#....##..#...##...#..##....#",
-  "#........#...XX...#........#",
-  "#........#........#........#",
-  "#..........................#",
-  "#.............P............#",
-  "############################",
+  "##########################",
+  "#........................#",
+  "#.11..................22.#",
+  "#.11.....#......#.....22.#",
+  "#........#.X..X.#........#",
+  "#....##..#......#..##....#",
+  "#....##............##....#",
+  "#.......X........X.......#",
+  "#...#####..P..P..#####...#",
+  "#.r.#####........#####.b.#",
+  "#.......X........X.......#",
+  "#....##............##....#",
+  "#....##..#......#..##....#",
+  "#........#.X..X.#........#",
+  "#........#......#........#",
+  "#........................#",
+  "#........................#",
+  "##########################",
 ];
 
 export function parseMap(rows: readonly string[], id = "custom", name = "Custom", theme: MapTheme = "arena"): GameMap {
@@ -68,6 +74,8 @@ export function parseMap(rows: readonly string[], id = "custom", name = "Custom"
   const spawns: Record<Team, Spawn[]> = { red: [], blue: [] };
   const crates: { x: number; y: number }[] = [];
   const beds: { x: number; y: number }[] = [];
+  const desks: { x: number; y: number }[] = [];
+  const bushes: { x: number; y: number }[] = [];
   const powerBoxes: { x: number; y: number }[] = [];
   const flags: GameMap["flags"] = {};
   rows.forEach((row, r) => {
@@ -81,6 +89,8 @@ export function parseMap(rows: readonly string[], id = "custom", name = "Custom"
       const x = (c + 0.5) * TILE;
       const y = (r + 0.5) * TILE;
       if (ch === "X") crates.push({ x, y });
+      if (ch === "D") desks.push({ x, y });
+      if (ch === "*") bushes.push({ x, y });
       if (ch === "P") powerBoxes.push({ x, y });
       if (ch === "r") flags.red = { x, y };
       if (ch === "b") flags.blue = { x, y };
@@ -129,15 +139,16 @@ export function parseMap(rows: readonly string[], id = "custom", name = "Custom"
       beds.push({ x: (c + 1) * TILE, y: (r + 1) * TILE });
     }
   });
-  // Tiles holding an object (crate, flag, respawn square...) have no floor of their own: give
-  // them the floor most of their neighbours have, so a crate in a wooden room sits on wood.
-  const objects = new Set(["X", "P", "r", "b", "1", "2", "T"]);
+  // Tiles holding an object (crate, desk, bush, flag, respawn square...) have no floor of their
+  // own: give them the floor most of their neighbours have, so a crate in a wooden room sits
+  // on wood.
+  const objects = new Set(["X", "P", "r", "b", "1", "2", "T", "D", "*"]);
   rows.forEach((row, r) => {
     for (let c = 0; c < cols; c++) {
       if (!objects.has(row[c]!)) continue;
       const around = [rows[r - 1]?.[c], rows[r + 1]?.[c], row[c - 1], row[c + 1]];
       const wood = around.filter((ch) => ch === ",").length;
-      const plain = around.filter((ch) => ch === "." ).length;
+      const plain = around.filter((ch) => ch === ".").length;
       if (wood > plain) tiles[r * cols + c] = "wood";
     }
   });
@@ -156,6 +167,8 @@ export function parseMap(rows: readonly string[], id = "custom", name = "Custom"
     spawns,
     crates,
     beds,
+    desks,
+    bushes,
     powerBoxes,
     flags,
     pads,

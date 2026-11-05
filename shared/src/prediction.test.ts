@@ -23,6 +23,14 @@ test("input queue applies one sample per tick and acks it", () => {
   assert.equal(q.ack, 2);
 });
 
+test("input queue skips malformed frames instead of throwing", () => {
+  const q = new InputQueue();
+  const bad = [null, 1, "x", undefined, { seq: 1, held: true, pressed: true }] as unknown as InputFrame[];
+  assert.doesNotThrow(() => q.push(bad));
+  assert.equal(q.length, 1);
+  assert.deepEqual(q.next(), { held: true, pressed: true });
+});
+
 test("a backlog drains back to the target depth, one extra sample per tick, keeping taps", () => {
   const q = new InputQueue();
   const frames: InputFrame[] = [];
@@ -131,4 +139,69 @@ test("only samples the server hasn't applied are kept for replay", () => {
   const { predictor } = playOverNetwork(playPattern, 200, 6, 6);
   // ~up + down ticks in flight, plus up to one snapshot interval.
   assert.ok(predictor.pendingCount <= 6 + 6 + SNAPSHOT_EVERY_TICKS + 1, `pending ${predictor.pendingCount}`);
+});
+
+// The predictor as it was before it reused buffers: a clone per tick and per replayed
+// sample. The faster one must produce exactly the same states.
+class ClonePredictor {
+  state: GameState | null = null;
+  prev: GameState | null = null;
+  private pending: InputFrame[] = [];
+  private seq = 0;
+  constructor(private localId: string) {}
+  tick(input: TankInput): void {
+    const frame = { seq: ++this.seq, ...input };
+    this.pending.push(frame);
+    if (!this.state) return;
+    this.prev = cloneState(this.state);
+    this.advance(this.state, frame);
+  }
+  reconcile(server: GameState, ack: number): void {
+    this.pending = this.pending.filter((f) => f.seq > ack);
+    const state = cloneState(server);
+    let prev = cloneState(state);
+    for (const frame of this.pending) {
+      prev = cloneState(state);
+      this.advance(state, frame);
+    }
+    this.prev = prev;
+    this.state = state;
+  }
+  private advance(state: GameState, frame: TankInput): void {
+    const inputs: Record<string, TankInput> = {};
+    for (const t of state.tanks) inputs[t.id] = t.id === this.localId ? frame : { held: t.held, pressed: false };
+    step(state, map, inputs, config);
+  }
+}
+
+test("reusing buffers doesn't change what prediction shows", () => {
+  const server = createState(map);
+  addTank(server, map, "me", "red");
+  addTank(server, map, "other", "blue");
+  const queue = new InputQueue();
+  const fast = new Predictor("me", config);
+  const slow = new ClonePredictor("me");
+  fast.reconcile(server, 0);
+  slow.reconcile(server, 0);
+  const inFlight: { at: number; frame: InputFrame }[] = [];
+  let compared = 0;
+  for (let t = 0; t < 900; t++) {
+    const input = playPattern(t);
+    const { frame } = fast.tick(input);
+    slow.tick(input);
+    inFlight.push({ at: t + 5, frame });
+    queue.push(inFlight.filter((m) => m.at === t).map((m) => m.frame));
+    // The other player walks and taps on their own rhythm.
+    step(server, map, { me: queue.next(), other: playPattern(t + 45) }, config);
+    if (server.tick % SNAPSHOT_EVERY_TICKS === 0) {
+      const snap = cloneState(server);
+      fast.reconcile(snap, queue.ack);
+      slow.reconcile(snap, queue.ack);
+      assert.deepEqual(snap, server, "reconcile must not change the server state");
+    }
+    assert.deepEqual(fast.state, slow.state, `state differs at tick ${t}`);
+    assert.deepEqual(fast.prev, slow.prev, `prev differs at tick ${t}`);
+    compared++;
+  }
+  assert.equal(compared, 900);
 });

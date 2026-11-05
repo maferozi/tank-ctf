@@ -7,3 +7,4 @@ export * from "./sim";
 export * from "./flags";
 export * from "./match";
 export * from "./maps";
+export * from "./voice";

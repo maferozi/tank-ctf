@@ -12,7 +12,7 @@ export function MapPreview({ map, width }: { map: GameMap; width: number }) {
     const canvas = ref.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
     canvas.width = Math.round(width * dpr);
     canvas.height = Math.round(height * dpr);
     const scale = (width / map.width) * dpr;
