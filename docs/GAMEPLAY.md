@@ -2,24 +2,32 @@
 
 Everything here is implemented in `shared/src/` and covered by `shared/src/sim.test.ts`.
 All numbers are in `shared/src/constants.ts`; change them there, not in the code.
+Turning, walking, bullets, ammo and crates follow measurements of the original game: see
+[ORIGINAL.md](ORIGINAL.md).
 
 ## The one button
 | Action | Result |
 |---|---|
-| Nothing pressed | The soldier turns in place (`SPIN_SPEED`, 1.2π rad/s). |
+| Nothing pressed | The soldier turns in place (`SPIN_SPEED`, 1.29π rad/s, one turn in 1.55 s), counter-clockwise at first. |
 | Any press | Fires one bullet immediately and reverses the turning direction. The heading then holds still for `SPIN_PAUSE_MS` (60 ms). |
-| Keep holding for `DEFAULT_HOLD_MS` (60 ms) | Walks forward at `DRIVE_SPEED` (160 px/s) until released. Releasing never fires. |
-| Tap again within `RAPID_FIRE_MS` (250 ms) | The gun snaps back to the first shot's heading, so rapid tapping fires in one straight line. |
+| Keep holding for `DEFAULT_HOLD_MS` (60 ms) | Walks forward until released: starts at `DRIVE_START` (half) of `DRIVE_SPEED` (186 px/s) and reaches full speed after `DRIVE_RAMP_MS` (0.4 s). Releasing never fires. |
+| Tap quickly | Each shot follows the gun as it wobbles back and forth, so a burst fans out a few degrees around one line. (`RAPID_FIRE_MS` is 0; set it above 0 to snap every quick shot back onto the first one's line.) |
 
 Input bounce guard: shots closer than `FIRE_COOLDOWN_MS` (100 ms) don't fire.
 
 ## Ammo
-- `MAX_AMMO` = 6 rounds. One round comes back every `RELOAD_MS` (1.5 s) while below full.
-- With 0 rounds a tap still turns you but doesn't fire. Respawning refills the magazine.
+- Unlimited (`UNLIMITED_AMMO`), like the original: no ammo dots, only the fire cooldown limits
+  shots (about 10 a second).
+- With `UNLIMITED_AMMO` off: `MAX_AMMO` = 6 rounds, one back every `RELOAD_MS` (1.5 s), shown as
+  dots under your soldier. With 0 rounds a tap still turns you but doesn't fire. Respawning
+  refills the magazine.
 
 ## Bullets
-- Speed `BULLET_SPEED` (440 px/s), range `BULLET_RANGE` (320 px), then they drop.
+- Speed `BULLET_SPEED` (620 px/s), range `BULLET_RANGE` (410 px, about 10 tiles), then they drop.
 - They stop on walls, crates, beds and power boxes. Teammates can't hurt each other.
+- A bullet breaks the crate it hits (`CRATE_BREAKS`): splinters, and the crate is gone until the
+  next round. Beds and power boxes don't break. Every press fires first, so walking straight
+  at a crate in range breaks it; a crate still gets shoved when you bump into it from the side.
 - One hit kills, unless the target has a shield. Respawn after `RESPAWN_MS` (8 s) on your
   team's respawn square; the body lies where it fell until then.
 - A fallen body is cover for its own team: it stops the other team's bullets until that soldier
@@ -28,7 +36,7 @@ Input bounce guard: shots closer than `FIRE_COOLDOWN_MS` (100 ms) don't fire.
 
 ## Falling
 - Shot while walking: the body keeps sliding forward and falls face-first, slowing by
-  `BODY_FRICTION` (420 px/s²), so about 30 px at walking speed. Walls and crates stop it.
+  `BODY_FRICTION` (420 px/s²), so about 40 px at full walking speed. Walls and crates stop it.
 - Shot while standing: knocked back along the bullet's path at `HIT_KNOCKBACK` (70 px/s),
   a few pixels, and falls away from the shooter.
 
@@ -80,8 +88,8 @@ speed set by their weights:
 | Bed, at rest | 6 × `CRATE_STATIC` = 12, loosening the same way |
 
 So you shove a standing soldier at ⅓ speed, two soldiers walking head-on stall, and a crate
-starts slow then slides at about 40 px/s. A bed (`BED_SIZE` 76 px, 2 × 2 tiles) slides at
-about 23 px/s; pushing a bed into the bed next to it pushes both, so packed rows barely move. Walls never move; whatever a wall blocks pushes back
+starts slow then slides at about 47 px/s. A bed (`BED_SIZE` 76 px, 2 × 2 tiles) slides at
+about 27 px/s; pushing a bed into the bed next to it pushes both, so packed rows barely move. Walls never move; whatever a wall blocks pushes back
 on the pusher.
 
 ## Power-up boxes

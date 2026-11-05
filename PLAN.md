@@ -77,6 +77,10 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
 
 - Sound effects (31 Oct 2026): synthesized with Web Audio for shots, flares, kills, shields,
   powers, flags and rounds, panned by position; Sound on/off button in game. See docs/GAMEPLAY.md.
+- Feel matched to the original (2 Nov 2026): turn speed, walk speed (with a short speed-up),
+  bullet speed and range measured frame by frame from screen recordings; unlimited ammo, quick
+  shots fan out instead of snapping into one line, crates break when shot. Numbers and method in
+  docs/ORIGINAL.md; pending Asad's playtest. Maps at the original's 1.41:1 shape are next.
 - Respawn squares (31 Oct 2026): every map has a 2 x 2 respawn square per team where soldiers
   start each round and respawn; teams score at their own flag stand on every map.
 - Maps and look (31 Oct 2026): light theme everywhere. Three maps recreated from the original

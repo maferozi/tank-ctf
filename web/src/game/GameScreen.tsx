@@ -75,6 +75,7 @@ export function GameScreen({ makeDriver, children }: { makeDriver: () => Driver;
           const base = { x: e.x, y: e.y, bornMs: now, team };
           if (e.type === "fire") effects.push({ ...base, kind: "flash" });
           if (e.type === "drop") effects.push({ ...base, kind: "puff" });
+          if (e.type === "crateBreak") effects.push({ ...base, kind: "splinters" });
           if (e.type === "kill") effects.push({ ...base, kind: "boom" });
           if (e.type === "shieldHit") effects.push({ ...base, kind: "spark", color: POWER_STYLE.shield.color });
           if (e.type === "power") {

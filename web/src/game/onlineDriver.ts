@@ -23,6 +23,8 @@ const MAX_FRAME_MS = 250; // after a tab switch, don't try to catch up more than
 // this long. Bigger jumps (respawn, a hard shove) snap instead.
 const CORRECTION_MS = 100;
 const SNAP_DISTANCE = 48;
+// Events your own prediction shows straight away (tankId = you); the server's copies are skipped.
+const PREDICTED_EVENTS = new Set<GameEvent["type"]>(["fire", "drop", "crateBreak"]);
 
 interface Timed {
   serverMs: number;
@@ -67,8 +69,8 @@ export function createOnlineDriver(session: Session): Driver {
     const state: GameState = { ...snap.state, events: [] };
     snaps.push({ serverMs, state });
     if (snaps.length > KEEP_SNAPSHOTS) snaps.shift();
-    // Your own shots and drops are already shown by prediction.
-    serverEvents.push(...snap.events.filter((e) => !(e.tankId === me && (e.type === "fire" || e.type === "drop"))));
+    // Your own shots, drops and broken crates are already shown by prediction.
+    serverEvents.push(...snap.events.filter((e) => !(e.tankId === me && PREDICTED_EVENTS.has(e.type))));
 
     const before = predictor.state?.tanks.find((t) => t.id === me);
     predictor.reconcile(state, snap.acks[me] ?? 0);
@@ -110,7 +112,7 @@ export function createOnlineDriver(session: Session): Driver {
       while (acc >= TICK_MS) {
         const { frame, events: tickEvents } = predictor.tick(button.consume());
         frames.push(frame);
-        events.push(...tickEvents.filter((e) => e.tankId === me && (e.type === "fire" || e.type === "drop")));
+        events.push(...tickEvents.filter((e) => e.tankId === me && PREDICTED_EVENTS.has(e.type)));
         acc -= TICK_MS;
       }
       if (frames.length) room.send(MSG.input, frames satisfies InputMessage);

@@ -8,7 +8,9 @@ import {
   BULLET_SPEED,
   CRATE_MASS,
   CRATE_SIZE,
+  DRIVE_RAMP_MS,
   DRIVE_SPEED,
+  DRIVE_START,
   FLARE_INTERVAL_MS,
   FLARE_MS,
   IDLE_TANK_BRAKE,
@@ -23,11 +25,12 @@ import {
   SPIN_PAUSE_MS,
   TANK_RADIUS,
   TICK_MS,
+  UNLIMITED_AMMO,
 } from "./constants";
 import { boxHitsWall, DEFAULT_MAP, parseMap } from "./map";
 import { getMap } from "./maps";
 import { contact } from "./physics";
-import { addTank, createState, givePower, step, type TankInput } from "./sim";
+import { addTank, createState, givePower, resetRound, step, type TankInput } from "./sim";
 
 const config = { holdMs: 60 };
 const map = DEFAULT_MAP;
@@ -86,17 +89,18 @@ test("not driving before holdMs", () => {
 test("each press reverses the spin direction", () => {
   const state = createState();
   const tank = addTank(state, map, "p1", "red");
+  tank.angle = Math.PI; // away from the 0 / 2π wrap
   step(state, map, {}, config);
   const a0 = tank.angle;
   step(state, map, {}, config);
-  assert.ok(tank.angle > a0, "spins positive at start");
-  step(state, map, { p1: { held: false, pressed: true } }, config);
-  assert.equal(tank.spinDir, -1);
-  const a1 = tank.angle;
-  for (let i = 0; i < ticks(SPIN_PAUSE_MS) + 1; i++) step(state, map, {}, config);
-  assert.ok(tank.angle < a1, "spins negative after a tap");
+  assert.ok(tank.angle < a0, "spins counter-clockwise (negative) at start, like the original");
   step(state, map, { p1: { held: false, pressed: true } }, config);
   assert.equal(tank.spinDir, 1);
+  const a1 = tank.angle;
+  for (let i = 0; i < ticks(SPIN_PAUSE_MS) + 1; i++) step(state, map, {}, config);
+  assert.ok(tank.angle > a1, "spins the other way after a tap");
+  step(state, map, { p1: { held: false, pressed: true } }, config);
+  assert.equal(tank.spinDir, -1);
 });
 
 test("heading holds still for SPIN_PAUSE_MS after a press", () => {
@@ -109,19 +113,27 @@ test("heading holds still for SPIN_PAUSE_MS after a press", () => {
   assert.equal(tank.angle, a);
 });
 
-test("rapid tapping keeps shots close to one line", () => {
+// The original: ~10 taps a second, each shot 5-12 degrees off the last as the gun wobbles
+// back and forth, but the burst stays aimed one way instead of sweeping round.
+test("rapid tapping fans shots out a little around one line", () => {
   const state = createState();
-  addTank(state, map, "p1", "red");
+  const tank = addTank(state, map, "p1", "red");
+  tank.angle = Math.PI; // away from the 0 / 2π wrap
   const angles: number[] = [];
   for (let tap = 0; tap < 12; tap++) {
     step(state, map, { p1: { held: false, pressed: true } }, config);
     const b = state.bullets.at(-1);
-    if (b) angles.push(Math.atan2(b.vy, b.vx));
-    for (let i = 0; i < ticks(120); i++) step(state, map, {}, config);
+    if (b && b.id === state.nextBulletId - 1) angles.push(Math.atan2(b.vy, b.vx) + (b.vy < 0 ? Math.PI * 2 : 0));
+    for (let i = 0; i < ticks(100); i++) step(state, map, {}, config);
   }
-  assert.ok(angles.length >= MAX_AMMO, `only ${angles.length} shots fired`);
-  const spread = Math.max(...angles) - Math.min(...angles);
-  assert.ok(spread < 1e-9, `shots should be in one straight line, spread ${spread} rad`);
+  assert.equal(angles.length, 12);
+  const deg = (r: number) => (r * 180) / Math.PI;
+  for (let i = 1; i < angles.length; i++) {
+    const turn = deg(Math.abs(angles[i]! - angles[i - 1]!));
+    assert.ok(turn > 3 && turn < 15, `shot ${i} turned ${turn.toFixed(1)} degrees from the last`);
+  }
+  const spread = deg(Math.max(...angles) - Math.min(...angles));
+  assert.ok(spread < 20, `burst should stay aimed one way, spread ${spread.toFixed(1)} degrees`);
 });
 
 test("a tap after a pause aims at the current heading, not the old line", () => {
@@ -181,7 +193,7 @@ test("bullet kills an enemy and the enemy respawns", () => {
 
 const tap = { held: false, pressed: true };
 
-test("a full magazine fires MAX_AMMO quick shots, then runs dry", () => {
+test("a full magazine fires MAX_AMMO quick shots, then runs dry", { skip: UNLIMITED_AMMO && "UNLIMITED_AMMO is on" }, () => {
   const state = createState();
   const tank = addTank(state, map, "p1", "red");
   let fired = 0;
@@ -199,7 +211,7 @@ test("a full magazine fires MAX_AMMO quick shots, then runs dry", () => {
   assert.equal(dryTaps, 10 - fired);
 });
 
-test("an empty tank cannot fire and gets one round back every RELOAD_MS", () => {
+test("an empty tank cannot fire and gets one round back every RELOAD_MS", { skip: UNLIMITED_AMMO && "UNLIMITED_AMMO is on" }, () => {
   const state = createState();
   const tank = addTank(state, map, "p1", "red");
   tank.ammo = 0;
@@ -210,6 +222,41 @@ test("an empty tank cannot fire and gets one round back every RELOAD_MS", () => 
   assert.equal(tank.ammo, 1);
   for (let i = 0; i < ticks(RELOAD_MS * MAX_AMMO); i++) step(state, map, {}, config);
   assert.equal(tank.ammo, MAX_AMMO);
+});
+
+test("with UNLIMITED_AMMO every quick tap fires and ammo never runs down", { skip: !UNLIMITED_AMMO && "UNLIMITED_AMMO is off" }, () => {
+  const state = createState();
+  const tank = addTank(state, map, "p1", "red");
+  let fired = 0;
+  // 20 taps 7 ticks apart (~117 ms, just over the fire cooldown): over 3 magazines' worth.
+  for (let i = 0; i < 20; i++) {
+    step(state, map, { p1: tap }, config);
+    if (state.events.some((e) => e.type === "fire")) fired++;
+    for (let k = 0; k < 6; k++) step(state, map, {}, config);
+  }
+  assert.equal(fired, 20);
+  assert.equal(tank.ammo, MAX_AMMO);
+});
+
+test("walking starts at DRIVE_START of full speed and reaches full speed after DRIVE_RAMP_MS", () => {
+  const state = createState();
+  const tank = addTank(state, map, "t", "red");
+  tank.x = 200;
+  tank.y = 300;
+  tank.angle = 0;
+  const stepX = () => {
+    const x = tank.x;
+    step(state, map, { t: down }, config);
+    return (tank.x - x) / (TICK_MS / 1000);
+  };
+  let speed = 0;
+  while (speed === 0) speed = stepX(); // waits out the hold time
+  assert.ok(Math.abs(speed - DRIVE_SPEED * DRIVE_START) < DRIVE_SPEED * 0.05, `starts at ${speed.toFixed(0)} px/s`);
+  for (let i = 0; i < ticks(DRIVE_RAMP_MS); i++) stepX();
+  assert.ok(Math.abs(stepX() - DRIVE_SPEED) < 1e-6, "full speed after the ramp");
+  step(state, map, { t: up }, config);
+  while (stepX() === 0); // a new press starts slow again
+  assert.ok(Math.abs(stepX() - DRIVE_SPEED * DRIVE_START) < DRIVE_SPEED * 0.1);
 });
 
 // Two tanks in the open middle lane, touching.
@@ -298,6 +345,7 @@ function crateAhead() {
   tank.angle = 0;
   const crate = { id: 1, x: tank.x + TANK_RADIUS + CRATE_SIZE / 2, y: 300, pushMs: 0 };
   state.crates.push(crate);
+  tank.cooldownMs = 1e9; // walk in without firing: a shot would break the crate
   return { state, tank, crate };
 }
 
@@ -343,6 +391,7 @@ function pushFor(bed: boolean): number {
   const size = bed ? BED_SIZE : CRATE_SIZE;
   const box = { id: 1, x: tank.x + TANK_RADIUS + size / 2, y: 360, pushMs: 0, bed };
   state.crates.push(box);
+  tank.cooldownMs = 1e9; // walk in without firing: a shot would break a crate
   for (let i = 0; i < 75; i++) step(state, OPEN_ROOM, { t: hold }, config);
   const x0 = box.x;
   for (let i = 0; i < 15; i++) step(state, OPEN_ROOM, { t: hold }, config);
@@ -393,7 +442,8 @@ test("a crate stops at a wall and the tank cannot push through it", () => {
 });
 
 test("crates block bullets", () => {
-  const { state, crate } = crateAhead();
+  const { state, tank, crate } = crateAhead();
+  tank.cooldownMs = 0;
   const target = addTank(state, map, "enemy", "blue");
   target.x = crate.x + 80;
   target.y = crate.y;
@@ -404,6 +454,27 @@ test("crates block bullets", () => {
   }
   assert.equal(target.alive, true);
   assert.equal(state.bullets.length, 0);
+});
+
+test("a crate breaks when shot, a bed doesn't, and crates are back next round", () => {
+  const state = createState(map);
+  const crate = state.crates.find((c) => !c.bed)!;
+  const tank = addTank(state, map, "t", "red");
+  tank.x = crate.x - CRATE_SIZE / 2 - TANK_RADIUS - 30;
+  tank.y = crate.y;
+  tank.angle = 0;
+  const count = state.crates.length;
+  step(state, map, { t: tap }, config);
+  let broke = false;
+  for (let i = 0; i < 20 && !broke; i++) {
+    step(state, map, {}, config);
+    broke = state.events.some((e) => e.type === "crateBreak" && e.tankId === "t");
+  }
+  assert.ok(broke, "the shot should break the crate");
+  assert.equal(state.crates.length, count - 1);
+  assert.equal(state.bullets.length, 0, "the bullet stops at the crate");
+  resetRound(state, map);
+  assert.equal(state.crates.length, count);
 });
 
 test("the default map spawns its crates clear of walls", () => {

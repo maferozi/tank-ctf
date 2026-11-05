@@ -4,6 +4,7 @@ import {
   BASE_RADIUS,
   BODY_FRICTION,
   CARRIER_SPEED,
+  DRIVE_RAMP_MS,
   DRIVE_SPEED,
   FLAG_RETURN_MS,
   SPAWN_PAD_SIZE,
@@ -180,7 +181,7 @@ function shootAt(walking: boolean) {
   victim.y = 300;
   victim.angle = -Math.PI / 2; // walking up, across the bullet's path
   const victimInput: Record<string, TankInput> = walking ? { victim: hold } : {};
-  run(state, 10, victimInput); // get walking
+  run(state, ticks(DRIVE_RAMP_MS) + 10, victimInput); // get walking at full speed
   victim.x = 420;
   victim.y = 300;
   shooter.x = 300;

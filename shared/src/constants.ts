@@ -19,6 +19,7 @@ export const IDLE_TANK_BRAKE = 2; // an idle tank has its brakes on: counts as 2
 export const BODY_MASS = 2; // a fallen soldier: solid and pushable until they respawn
 export const CRATE_SIZE = 32; // px, square
 export const CRATE_MASS = 3;
+export const CRATE_BREAKS = true; // one bullet breaks a crate (beds don't break)
 // Crates "stick" at first: they start CRATE_STATIC times heavier and loosen up to
 // CRATE_MASS after being pushed for CRATE_BREAKAWAY_MS.
 export const CRATE_STATIC = 2;
@@ -27,21 +28,28 @@ export const CRATE_BREAKAWAY_MS = 600;
 // loosen like crates.
 export const BED_SIZE = 76; // px, square; leaves a 4 px gap between beds placed side by side
 export const BED_MASS = 6;
-export const SPIN_SPEED = Math.PI * 1.2; // rad/s while not driving
+// Measured from the original (docs/ORIGINAL.md): one full turn in 1.555 s.
+export const SPIN_SPEED = Math.PI * 1.29; // rad/s while not driving
 // After each press the tank holds its heading this long before spinning the other way,
 // so rapid tapping keeps the barrel wobbling around one line instead of sweeping.
 export const SPIN_PAUSE_MS = 60;
 // A press this soon after the previous one fires along the previous shot's heading
-// (the barrel snaps back), so rapid tapping fires in one straight line. 0 disables it.
-export const RAPID_FIRE_MS = 250;
-export const DRIVE_SPEED = 160; // px/s
+// (the barrel snaps back), so rapid tapping fires in one straight line. 0 disables it:
+// shots then follow the wobbling gun and fan out a little, as in the original.
+export const RAPID_FIRE_MS = 0;
+export const DRIVE_SPEED = 186; // px/s, full walking speed
+// Walking starts at DRIVE_START of full speed and reaches full speed after DRIVE_RAMP_MS.
+export const DRIVE_START = 0.5;
+export const DRIVE_RAMP_MS = 400;
 
-export const BULLET_SPEED = 440; // px/s
+export const BULLET_SPEED = 620; // px/s
 export const BULLET_RADIUS = 4;
-export const BULLET_RANGE = 320; // px travelled before the bullet drops
+export const BULLET_RANGE = 410; // px travelled before the bullet drops
 export const BULLET_FADE = 80; // last px of range drawn fading out
 // Shorter than a fast double tap, so every real tap fires; only stops input bounce.
 export const FIRE_COOLDOWN_MS = 100;
+// The original never runs dry. Set false to bring back the magazine below.
+export const UNLIMITED_AMMO = true;
 export const MAX_AMMO = 6;
 export const RELOAD_MS = 1500; // one round back every RELOAD_MS while below MAX_AMMO
 

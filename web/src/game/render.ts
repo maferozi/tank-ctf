@@ -16,6 +16,7 @@ import {
   SPEED_MS,
   TANK_RADIUS,
   TILE,
+  UNLIMITED_AMMO,
   getMap,
   type Flag,
   type GameMap,
@@ -39,7 +40,7 @@ export const POWER_STYLE: Record<PowerKind, { color: string; label: string }> = 
 };
 
 export interface Effect {
-  kind: "flash" | "boom" | "puff" | "spark" | "text";
+  kind: "flash" | "boom" | "puff" | "splinters" | "spark" | "text";
   x: number;
   y: number;
   bornMs: number;
@@ -409,7 +410,7 @@ export function drawSoldier(ctx: CanvasRenderingContext2D, t: Tank, isLocal: boo
   drawPowers(ctx, t, nowMs);
   if (isLocal) {
     drawPowerBars(ctx, t);
-    drawAmmo(ctx, t);
+    if (!UNLIMITED_AMMO) drawAmmo(ctx, t);
   }
   if (name) drawNameTag(ctx, name, isLocal);
 
@@ -654,6 +655,7 @@ function drawAmmo(ctx: CanvasRenderingContext2D, t: Tank): void {
 const FLASH_MS = 90;
 const BOOM_MS = 450;
 const PUFF_MS = 250;
+const SPLINTERS_MS = 450;
 const SPARK_MS = 250;
 const TEXT_MS = 1000;
 
@@ -661,6 +663,7 @@ const EFFECT_MS: Record<Effect["kind"], number> = {
   flash: FLASH_MS,
   boom: BOOM_MS,
   puff: PUFF_MS,
+  splinters: SPLINTERS_MS,
   spark: SPARK_MS,
   text: TEXT_MS,
 };
@@ -688,6 +691,19 @@ function drawEffects(ctx: CanvasRenderingContext2D, effects: Effect[], nowMs: nu
       ctx.beginPath();
       ctx.arc(e.x, e.y, BULLET_RADIUS + p * 6, 0, Math.PI * 2);
       ctx.fill();
+    } else if (e.kind === "splinters" && age < SPLINTERS_MS) {
+      // A broken crate: wood bits fly out and fade over a puff of dust.
+      const p = age / SPLINTERS_MS;
+      ctx.fillStyle = `rgba(140, 110, 70, ${0.35 * (1 - p)})`;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, CRATE_SIZE * (0.4 + p * 0.4), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgba(176, 116, 52, ${1 - p})`;
+      for (let k = 0; k < 8; k++) {
+        const a = (k * Math.PI) / 4 + 0.4;
+        const r = 6 + p * CRATE_SIZE * 0.9;
+        ctx.fillRect(e.x + Math.cos(a) * r - 2.5, e.y + Math.sin(a) * r - 2.5, 5, 5);
+      }
     } else if (e.kind === "spark" && age < SPARK_MS) {
       const p = age / SPARK_MS;
       ctx.strokeStyle = e.color ?? "#ffffff";

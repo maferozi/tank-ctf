@@ -140,6 +140,13 @@ const SOUNDS = {
     if (!v) return;
     hiss(v.out, v.t, { dur: 0.04, vol: 0.12, filter: "bandpass", freq: 2500, q: 3 });
   },
+  // A crate breaks: a woody crack over a short crunch.
+  crateBreak(where: Where) {
+    const v = voice(where);
+    if (!v) return;
+    hiss(v.out, v.t, { dur: 0.16, vol: 0.4, filter: "bandpass", freq: 900, to: 300, q: 1.5 });
+    tone(v.out, v.t, { type: "square", freq: 140, to: 70, dur: 0.12, vol: 0.12 });
+  },
   // Someone goes down: an impact thud and a falling groan.
   kill(where: Where) {
     const v = voice(where);
@@ -250,6 +257,7 @@ export function playEvents(events: readonly GameEvent[], view: SoundView): void 
   for (const e of events) {
     const mine = e.tankId === view.localId;
     if (e.type === "drop" && mine) SOUNDS.drop(where(e.x, e.y, true));
+    if (e.type === "crateBreak") SOUNDS.crateBreak(where(e.x, e.y, mine));
     if (e.type === "kill") {
       if (mine) SOUNDS.died();
       else {
