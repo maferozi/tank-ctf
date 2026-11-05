@@ -1,40 +1,74 @@
-import type { GameState, Tank } from "@tank/shared";
+import { copyInto, type GameState, type Tank } from "@tank/shared";
+
+interface Movable {
+  x: number;
+  y: number;
+}
 
 // Blends two game states (matched by id) into one, t = 0..1. Things only in `b` are taken
 // as they are. Used by the online driver, which mixes states from different timelines.
+// It runs every frame, so it reuses its output: the state it returns (and the blended
+// objects in it) are only valid until the next call. Unchanged objects are `b`'s own.
+export class Blender {
+  private out = {} as GameState;
+  private lists = new Map<string, unknown[]>(); // output arrays, per field
+  private pools = new Map<string, Movable[]>(); // blended objects, per field and slot
+  private byKey = new Map<unknown, Movable>();
+
+  blend(a: GameState, b: GameState, t: number): GameState {
+    if (a === b || t >= 1) return b;
+    const out = this.out as unknown as Record<string, unknown>;
+    for (const k in b) out[k] = (b as unknown as Record<string, unknown>)[k];
+    // Don't slide across the map when someone respawns.
+    out.tanks = this.list("tanks", a.tanks, b.tanks, t, (x) => x.id, (p, x) => p.alive === x.alive, true);
+    out.bullets = this.list("bullets", a.bullets, b.bullets, t, (x) => x.id);
+    out.crates = this.list("crates", a.crates, b.crates, t, (x) => x.id);
+    // A box that just came home must not slide back.
+    out.powerBoxes = this.list("powerBoxes", a.powerBoxes, b.powerBoxes, t, (x) => x.id, (p, x) => p.respawnMs <= 0 && x.respawnMs <= 0);
+    // Carried flags are drawn on their carrier; a flag sent home must not slide back.
+    out.flags = this.list("flags", a.flags, b.flags, t, (x) => x.team, (p, x) => p.atHome === x.atHome);
+    return this.out;
+  }
+
+  private list<T extends Movable>(
+    field: string,
+    from: readonly T[],
+    to: readonly T[],
+    t: number,
+    key: (x: T) => unknown,
+    canBlend: (p: T, x: T) => boolean = () => true,
+    angle = false,
+  ): T[] {
+    const byKey = this.byKey;
+    byKey.clear();
+    for (const p of from) byKey.set(key(p), p);
+    let out = this.lists.get(field) as T[] | undefined;
+    if (!out) this.lists.set(field, (out = []));
+    let pool = this.pools.get(field) as T[] | undefined;
+    if (!pool) this.pools.set(field, (pool = []));
+    out.length = to.length;
+    for (let i = 0; i < to.length; i++) {
+      const x = to[i]!;
+      const p = byKey.get(key(x)) as T | undefined;
+      const turned = angle && (p as unknown as Tank)?.angle !== (x as unknown as Tank).angle;
+      if (!p || (p.x === x.x && p.y === x.y && !turned) || !canBlend(p, x)) {
+        out[i] = x;
+        continue;
+      }
+      const slot = (pool[i] = copyInto(pool[i] ?? null, x));
+      slot.x = lerp(p.x, x.x, t);
+      slot.y = lerp(p.y, x.y, t);
+      if (angle) (slot as unknown as Tank).angle = lerpAngle((p as unknown as Tank).angle, (x as unknown as Tank).angle, t);
+      out[i] = slot;
+    }
+    return out;
+  }
+}
+
+// One-off blend into new objects (allocates; prefer a Blender for per-frame use).
 export function blendStates(a: GameState, b: GameState, t: number): GameState {
-  if (a === b || t >= 1) return b;
-  const tanks = new Map(a.tanks.map((x) => [x.id, x]));
-  const bullets = new Map(a.bullets.map((x) => [x.id, x]));
-  const crates = new Map(a.crates.map((x) => [x.id, x]));
-  const boxes = new Map(a.powerBoxes.map((x) => [x.id, x]));
-  const flags = new Map(a.flags.map((x) => [x.team, x]));
-  return {
-    ...b,
-    tanks: b.tanks.map((x) => {
-      const p = tanks.get(x.id);
-      // Don't slide across the map when someone respawns.
-      return p && p.alive === x.alive ? blendTank(p, x, t) : x;
-    }),
-    bullets: b.bullets.map((x) => {
-      const p = bullets.get(x.id);
-      return p ? { ...x, x: lerp(p.x, x.x, t), y: lerp(p.y, x.y, t) } : x;
-    }),
-    crates: b.crates.map((x) => {
-      const p = crates.get(x.id);
-      return p ? { ...x, x: lerp(p.x, x.x, t), y: lerp(p.y, x.y, t) } : x;
-    }),
-    powerBoxes: b.powerBoxes.map((x) => {
-      const p = boxes.get(x.id);
-      // A box that just came home must not slide back.
-      return p && p.respawnMs <= 0 && x.respawnMs <= 0 ? { ...x, x: lerp(p.x, x.x, t), y: lerp(p.y, x.y, t) } : x;
-    }),
-    flags: b.flags.map((x) => {
-      const p = flags.get(x.team);
-      // Carried flags are drawn on their carrier; a flag sent home must not slide back.
-      return p && p.atHome === x.atHome ? { ...x, x: lerp(p.x, x.x, t), y: lerp(p.y, x.y, t) } : x;
-    }),
-  };
+  const blended = new Blender().blend(a, b, t);
+  return blended === b ? b : copyInto(null, blended);
 }
 
 export function blendTank(a: Tank, b: Tank, t: number): Tank {

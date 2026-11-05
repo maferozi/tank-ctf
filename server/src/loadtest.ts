@@ -1,11 +1,13 @@
 // Multiplayer load test against a running server: `npm run loadtest -w server`.
 // PLAYERS bots join one room and tap / walk at random for SECONDS, then it reports
-// snapshot rate and jitter, server tick rate, press-to-shot latency, message size,
-// and whether all players saw the same game.
+// snapshot rate and jitter, server tick rate, press-to-shot latency, message size (deltas,
+// keyframes, and what full snapshots would cost), and whether all players saw the same game.
+// Bots also ask for a keyframe now and then, so the comparison checks states rebuilt from
+// deltas against keyframes, field for field.
 //
 // Env: SERVER_URL (default ws://localhost:2567), PLAYERS (8), SECONDS (20).
 import { Client, type Room } from "@colyseus/sdk";
-import { MAX_PLAYERS, MSG, ROOM_NAME, TICK_MS, type Snapshot } from "@tank/shared";
+import { MAX_PLAYERS, MSG, ROOM_NAME, SnapshotDecoder, TICK_MS, type Snapshot, type SnapshotMessage } from "@tank/shared";
 import { pack } from "msgpackr";
 import { BotButton } from "./botButton";
 
@@ -13,6 +15,7 @@ const url = process.env.SERVER_URL ?? "ws://localhost:2567";
 const PLAYERS = Number(process.env.PLAYERS ?? 8);
 const SECONDS = Number(process.env.SECONDS ?? 20);
 const PRESS_TIMEOUT_MS = 1000;
+const KEYFRAME_REQUEST_MS = [800, 2500]; // each bot asks for a keyframe this often
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const rand = (min: number, max: number) => min + Math.random() * (max - min);
@@ -23,12 +26,26 @@ interface BotStats {
   pressTimeouts: number;
   firstTick?: { tick: number; at: number };
   lastTick?: { tick: number; at: number };
-  bytes: number[]; // msgpack size of sampled snapshots
+  deltaBytes: number[]; // msgpack size of each message as sent
+  keyBytes: number[];
+  fullBytes: number[]; // what a full snapshot would have been (sampled)
+  decodeFailures: number;
   tickHashes: Map<number, string>; // for comparing what different players saw
 }
 
 class Bot {
-  stats: BotStats = { intervals: [], pressLatencies: [], pressTimeouts: 0, bytes: [], tickHashes: new Map() };
+  stats: BotStats = {
+    intervals: [],
+    pressLatencies: [],
+    pressTimeouts: 0,
+    deltaBytes: [],
+    keyBytes: [],
+    fullBytes: [],
+    decodeFailures: 0,
+    tickHashes: new Map(),
+  };
+  private decoder = new SnapshotDecoder();
+  private nextKeyRequest = performance.now() + rand(KEYFRAME_REQUEST_MS[0]!, KEYFRAME_REQUEST_MS[1]!);
   private lastArrival = 0;
   private pendingPressAt: number | null = null;
   private ammo = 6;
@@ -39,7 +56,19 @@ class Bot {
   constructor(public room: Room) {
     this.button = new BotButton(room);
     room.onMessage(MSG.roster, () => {});
-    room.onMessage(MSG.snapshot, (snap: Snapshot) => this.onSnapshot(snap));
+    room.onMessage(MSG.voiceConfig, () => {});
+    room.onMessage(MSG.snapshot, (msg: SnapshotMessage) => this.onMessage(msg));
+  }
+
+  private onMessage(msg: SnapshotMessage) {
+    (msg.full ? this.stats.keyBytes : this.stats.deltaBytes).push(pack(msg).length);
+    const snap = this.decoder.decode(msg);
+    if (!snap) {
+      this.stats.decodeFailures++;
+      this.room.send(MSG.keyframe);
+      return;
+    }
+    this.onSnapshot(snap);
   }
 
   private onSnapshot(snap: Snapshot) {
@@ -49,11 +78,8 @@ class Bot {
     const mark = { tick: snap.state.tick, at: now };
     this.stats.firstTick ??= mark;
     this.stats.lastTick = mark;
-    if (snap.state.tick % 30 === 0) this.stats.bytes.push(pack(snap).length);
-    this.stats.tickHashes.set(
-      snap.state.tick,
-      snap.state.tanks.map((t) => `${t.id}:${t.x.toFixed(2)},${t.y.toFixed(2)},${t.alive}`).join("|"),
-    );
+    if (snap.state.tick % 30 === 0) this.stats.fullBytes.push(pack({ full: snap.state, events: snap.events, acks: snap.acks }).length);
+    this.stats.tickHashes.set(snap.state.tick, JSON.stringify(snap.state));
     const me = snap.state.tanks.find((t) => t.id === this.room.sessionId);
     if (me) this.ammo = me.ammo;
     if (this.pendingPressAt !== null) {
@@ -69,6 +95,10 @@ class Bot {
 
   // Random play: short taps (measured) and walks of 0.2-0.9 s.
   act(now: number) {
+    if (now >= this.nextKeyRequest) {
+      this.room.send(MSG.keyframe);
+      this.nextKeyRequest = now + rand(KEYFRAME_REQUEST_MS[0]!, KEYFRAME_REQUEST_MS[1]!);
+    }
     this.decide(now);
     this.button.flush(now);
   }
@@ -119,6 +149,7 @@ if (roomFull) {
   try {
     const extra = await new Client(url).joinById(first.roomId, { name: "Extra", team: "red" });
     extra.onMessage(MSG.roster, () => {});
+    extra.onMessage(MSG.voiceConfig, () => {});
     extra.onMessage(MSG.snapshot, () => {});
     await extra.leave();
   } catch {
@@ -138,7 +169,10 @@ await Promise.all(bots.map((b) => b.room.leave()));
 const all = (pick: (s: BotStats) => number[]) => bots.flatMap((b) => pick(b.stats));
 const intervals = all((s) => s.intervals);
 const latencies = all((s) => s.pressLatencies);
-const bytes = all((s) => s.bytes);
+const deltaBytes = all((s) => s.deltaBytes);
+const keyBytes = all((s) => s.keyBytes);
+const fullBytes = all((s) => s.fullBytes);
+const decodeFailures = bots.reduce((n, b) => n + b.stats.decodeFailures, 0);
 const tickRates = bots.map((b) => {
   const { firstTick: a, lastTick: z } = b.stats;
   return a && z ? ((z.tick - a.tick) * 1000) / (z.at - a.at) : NaN;
@@ -158,7 +192,9 @@ for (const bot of bots.slice(1)) {
     if (ref !== hash) mismatched++;
   }
 }
-const avgBytes = bytes.reduce((a, b) => a + b, 0) / Math.max(1, bytes.length);
+const avg = (v: number[]) => v.reduce((a, b) => a + b, 0) / Math.max(1, v.length);
+const sentBytes = avg([...deltaBytes, ...keyBytes]);
+const kb = (n: number) => `${(n / 1024).toFixed(2)} KB`;
 
 console.log(`
 Players:             ${bots.length} joined${roomFull ? `, extra player ${extraRejected ? "rejected (room full)" : "NOT rejected"}` : ""}
@@ -166,7 +202,9 @@ Server ticks:        ${f(Math.min(...tickRates))}-${f(Math.max(...tickRates))} p
 Snapshots:           ${f(Math.min(...snapRates))}-${f(Math.max(...snapRates))} per second per player (target 30)
 Snapshot gaps:       median ${f(pct(intervals, 50))} ms, p95 ${f(pct(intervals, 95))} ms, p99 ${f(pct(intervals, 99))} ms, max ${f(Math.max(...intervals))} ms
 Press -> shot seen:  median ${f(pct(latencies, 50))} ms, p95 ${f(pct(latencies, 95))} ms, max ${f(Math.max(...latencies))} ms (${latencies.length} taps, ${timeouts} without a shot)
-Snapshot size:       ~${(avgBytes / 1024).toFixed(1)} KB, so ~${((avgBytes * 30) / 1024).toFixed(0)} KB/s down per player
+Snapshot size:       ~${kb(sentBytes)} on average, so ~${((sentBytes * 30) / 1024).toFixed(1)} KB/s down per player
+                     deltas ${kb(avg(deltaBytes))} (${deltaBytes.length}), keyframes ${kb(avg(keyBytes))} (${keyBytes.length}), full state would be ${kb(avg(fullBytes))}
+Deltas that failed:  ${decodeFailures}
 Same game for all:   ${compared} tick states compared, ${mismatched} differed
 `);
-process.exit(mismatched > 0 || (roomFull && !extraRejected) ? 1 : 0);
+process.exit(mismatched > 0 || decodeFailures > 0 || (roomFull && !extraRejected) ? 1 : 0);

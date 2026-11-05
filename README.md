@@ -26,6 +26,8 @@ and a shared TypeScript game simulation that runs on both the server and every p
   teams lock until it ends. Reloading or a dropped connection rejoins you within 30 s. The
   server runs the game; your own soldier is predicted on your device, so controls react within
   a frame or two even with a 100 ms connection.
+- **Voice chat.** Open mic with a mute chip, peer to peer and encrypted: everyone in the lobby,
+  only your own team during a match. Speaking players glow. See [docs/VOICE.md](docs/VOICE.md).
 - **Phones and desktop.** Desktop: click anywhere or press Space. Phones: a big TAP button next
   to the map.
 

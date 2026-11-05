@@ -2,25 +2,34 @@
 
 Everything here is implemented in `shared/src/` and covered by `shared/src/sim.test.ts`.
 All numbers are in `shared/src/constants.ts`; change them there, not in the code.
+Turning, walking, bullets, ammo and crates follow measurements of the original game: see
+[ORIGINAL.md](ORIGINAL.md).
 
 ## The one button
 | Action | Result |
 |---|---|
-| Nothing pressed | The soldier turns in place (`SPIN_SPEED`, 1.2π rad/s). |
+| Nothing pressed | The soldier turns in place (`SPIN_SPEED`, 1.29π rad/s, one turn in 1.55 s), counter-clockwise at first. |
 | Any press | Fires one bullet immediately and reverses the turning direction. The heading then holds still for `SPIN_PAUSE_MS` (60 ms). |
-| Keep holding for `DEFAULT_HOLD_MS` (60 ms) | Walks forward at `DRIVE_SPEED` (160 px/s) until released. Releasing never fires. |
-| Tap again within `RAPID_FIRE_MS` (250 ms) | The gun snaps back to the first shot's heading, so rapid tapping fires in one straight line. |
+| Keep holding for `DEFAULT_HOLD_MS` (60 ms) | Walks forward until released: starts at `DRIVE_START` (half) of `DRIVE_SPEED` (186 px/s) and reaches full speed after `DRIVE_RAMP_MS` (0.4 s). Releasing never fires. |
+| Tap quickly | Each shot follows the gun as it wobbles back and forth, so a burst fans out a few degrees around one line. (`RAPID_FIRE_MS` is 0; set it above 0 to snap every quick shot back onto the first one's line.) |
 
 Input bounce guard: shots closer than `FIRE_COOLDOWN_MS` (100 ms) don't fire.
 
 ## Ammo
-- `MAX_AMMO` = 6 rounds. One round comes back every `RELOAD_MS` (1.5 s) while below full.
-- With 0 rounds a tap still turns you but doesn't fire. Respawning refills the magazine.
+- `MAX_AMMO` = 6 rounds, one back every `RELOAD_MS` (1.5 s), shown as dots under your soldier.
+  With 0 rounds a tap still turns you but doesn't fire. Respawning refills the magazine.
+- `UNLIMITED_AMMO` (off) removes the magazine, like the original: no dots, only the fire cooldown
+  limits shots (about 10 a second).
 
 ## Bullets
-- Speed `BULLET_SPEED` (440 px/s), range `BULLET_RANGE` (320 px), then they drop.
-- They stop on walls, crates, beds and power boxes. Teammates can't hurt each other.
-- One hit kills, unless the target has a shield. Respawn after `RESPAWN_MS` (8 s) on your
+- Speed `BULLET_SPEED` (620 px/s), range `BULLET_RANGE` (410 px, about 10 tiles), then they drop.
+- They stop on walls, crates, desks, beds and power boxes. They fly over water and bushes.
+  Teammates can't hurt each other.
+- Crates never break (`CRATE_BREAKS` off): they are solid cover you push into a lane to block it.
+  With `CRATE_BREAKS` on, a bullet breaks the crate it hits: splinters, and the crate is gone until the
+  next round. Desks, beds and power boxes never break. Every press fires first, so walking straight
+  at a crate in range breaks it; a crate still gets shoved when you bump into it from the side.
+- One hit kills, unless the target has a shield (see power-ups). Respawn after `RESPAWN_MS` (8 s) on your
   team's respawn square; the body lies where it fell until then.
 - A fallen body is cover for its own team: it stops the other team's bullets until that soldier
   respawns. Teammates' bullets pass straight through it. Bodies are solid and can be pushed (see
@@ -28,7 +37,7 @@ Input bounce guard: shots closer than `FIRE_COOLDOWN_MS` (100 ms) don't fire.
 
 ## Falling
 - Shot while walking: the body keeps sliding forward and falls face-first, slowing by
-  `BODY_FRICTION` (420 px/s²), so about 30 px at walking speed. Walls and crates stop it.
+  `BODY_FRICTION` (420 px/s²), so about 40 px at full walking speed. Walls and crates stop it.
 - Shot while standing: knocked back along the bullet's path at `HIT_KNOCKBACK` (70 px/s),
   a few pixels, and falls away from the shooter.
 
@@ -36,12 +45,14 @@ Input bounce guard: shots closer than `FIRE_COOLDOWN_MS` (100 ms) don't fire.
 - Each team has a **respawn square** (2 × 2 tiles, `SPAWN_PAD_SIZE` 80 px, `1` / `2` in the map
   legend) with four spawn spots. Everyone starts each round there and comes back there after
   dying. With more than four on a team, soldiers sharing a spot get pushed apart.
-- Each team's flag stands at its base, a dashed ring (`BASE_RADIUS` 34 px) around the flag
-  stand: `r` / `b` in the map legend.
-- Touch the enemy flag to pick it up; it rides on your back. Carriers walk at
-  `CARRIER_SPEED` (0.8×).
-- Carry it into your own base (the ring around your own flag stand) to win the round. The
-  respawn square doesn't count. A "RED WINS" / "BLUE WINS" banner shows,
+- Each team's flag stands at its base, a team-coloured ring around the flag stand
+  (`r` / `b` in the map legend). The ring is drawn at exactly `BASE_RADIUS` (20 px) and the flag
+  inside `FLAG_RADIUS` (6 px), so what you see is what counts.
+- Touch the enemy flag to pick it up: your centre within `TANK_RADIUS` + `FLAG_RADIUS` (20 px)
+  of it, so your body has to reach the flag itself, not just pass near it. It rides on your back.
+  Carriers walk at `CARRIER_SPEED` (0.8×).
+- Carry it home to win the round: your centre within `BASE_RADIUS` (20 px) of your own flag
+  stand, i.e. standing on the stand. The respawn square doesn't count. A "RED WINS" / "BLUE WINS" banner shows,
   everything freezes, and after `ROUND_RESTART_MS` (6 s) a fresh round starts: everyone back on
   their respawn square, flags home, crates and power boxes reset.
 - Shoot the carrier and the flag drops where they fall. An enemy can grab it again; one of its
@@ -66,7 +77,7 @@ Picked by whoever creates the room (home page → Match). The join page shows it
   exactly one champion.
 
 ## Pushing and weight
-Soldiers, crates and power boxes never overlap. Two bodies pushing each other move together at a
+Soldiers, crates, desks, beds and power boxes never overlap. Two bodies pushing each other move together at a
 speed set by their weights:
 
 | Body | Weight |
@@ -76,28 +87,47 @@ speed set by their weights:
 | Fallen soldier (until respawn) | `BODY_MASS` = 2 |
 | Crate / power box, once sliding | `CRATE_MASS` = 3 |
 | Crate / power box, at rest | 3 × `CRATE_STATIC` = 6, loosening over `CRATE_BREAKAWAY_MS` (0.6 s) |
+| Desk (Office, Classroom), once sliding | `DESK_MASS` = 4 |
+| Desk, at rest | 4 × `CRATE_STATIC` = 8, loosening the same way |
 | Bed (Classroom), once sliding | `BED_MASS` = 6 |
 | Bed, at rest | 6 × `CRATE_STATIC` = 12, loosening the same way |
 
 So you shove a standing soldier at ⅓ speed, two soldiers walking head-on stall, and a crate
-starts slow then slides at about 40 px/s. A bed (`BED_SIZE` 76 px, 2 × 2 tiles) slides at
-about 23 px/s; pushing a bed into the bed next to it pushes both, so packed rows barely move. Walls never move; whatever a wall blocks pushes back
-on the pusher.
+starts slow then slides at about 47 px/s. A desk (`DESK_SIZE` 34 px, one tile) slides at about
+37 px/s. A bed (`BED_SIZE` 76 px, 2 × 2 tiles) slides at about 27 px/s; pushing a bed into the
+bed next to it pushes both, so packed rows barely move. Walls never move; whatever a wall blocks
+pushes back on the pusher.
+
+**Pushing goes straight.** Walking into a crate, desk, bed or (with a power) a power box pushes
+it straight along the face you walk into, picked from your heading, even when you hit it off
+centre near a corner (up to half the box plus half your radius off its centre line). It no
+longer skids sideways or spins you round its corner. While pushing you grip the face like
+friction: sideways walking up to `PUSH_GRIP` (0.6) times the forward walking is cancelled, so a
+heading up to about 31° off the face still pushes straight and you stay behind the box. Steeper
+headings slide along the face, and a soldier who only clips a corner glances off as before.
+Standing beside a corner (your centre past the face's edge) and walking away from the box, you
+are not gripped: you slip past the corner instead of sticking to it or dragging the box.
 
 ## Power-up boxes
 - Purple "?" boxes. Touch one (walk into it) to get a random power; shooting it does nothing.
 - One power at a time. With a power active, boxes are solid and push like crates.
-- A taken box returns to its home spot after `POWER_RESPAWN_MS` (12 s).
+- Boxes are **not on the map when a round starts**. Each appears after a random
+  `POWER_START_MIN_MS`..`POWER_START_MAX_MS` (5–15 s), and after being taken comes back to its
+  home spot after a random `POWER_RESPAWN_MIN_MS`..`POWER_RESPAWN_MAX_MS` (15–30 s). Nobody can
+  time them. A hidden box isn't drawn and pops in with a ring.
+- Every map has 2–4 boxes, each more than 4 tiles from both flag stands, so a carrier can't
+  grab a shield on the way home without a detour.
 - Dying clears your power.
 
 | Power | Effect | Lasts |
 |---|---|---|
-| Shield | Blocks every bullet. Blinks in the last 2 s. | `SHIELD_MS` 14 s |
+| Shield | Stops `SHIELD_HITS` (3) bullets. The bubble shows the hits left as 3 segments; each hit sparks, the last one shatters it, and the next bullet kills. Blinks in the last 2 s. | `SHIELD_MS` 10 s or 3 hits, whichever comes first |
 | Speed | Walk at `SPEED_BOOST` 1.6×. | `SPEED_MS` 14 s |
 | Flare | 4 bullets (front, back, left, right) every `FLARE_INTERVAL_MS` 2 s, no ammo used. 7 bursts. | `FLARE_MS` 14 s |
 
 Random rolls use a seeded generator stored in the game state, so the server and every client
-roll the same.
+roll the same. The server (and solo practice) picks a fresh seed for every match, so box
+timings and kinds differ from game to game.
 
 ## Sounds
 Synthesized in the browser (`web/src/game/sound.ts`, no audio files). Audio starts on the first
@@ -111,6 +141,7 @@ press; the "Sound on / off" button top-right mutes it and is remembered on the d
 | Someone is shot | Thud and falling groan; a bright two-note confirm if you shot them. |
 | You are shot | Low dull hit. |
 | Shield blocks a bullet | Metallic ping. |
+| Shield breaks (last hit) | Glassy crash. |
 | Power picked up | Rising notes, different for shield, speed and flare. |
 | Flag taken | Rising two notes when your team takes theirs; a three-note alarm when they take yours. |
 | Flag dropped / returned | Falling two notes / bright chime. |
@@ -118,30 +149,42 @@ press; the "Sound on / off" button top-right mutes it and is remembered on the d
 | New round | Beep, beep, higher beep. |
 
 ## Maps
-All maps are 28×18 tiles (40 px each), defined as text in `shared/src/maps.ts` (Arena is in
+All maps are 26 × 18 tiles (40 px each, 1040 × 720 px), the original's ~1.41:1 shape, so they
+fill a phone held sideways. They are defined as text in `shared/src/maps.ts` (Arena is in
 `map.ts`). Legend: `#` wall, `.` floor, `1`/`2` red/blue respawn square (a 2 × 2 block),
 `X` crate, `P` power box, `r`/`b` red/blue flag stand, `T` bed (each 2 × 2 block is one bed),
-`~` water, `,` wood floor.
+`D` desk, `~` water, `,` wood floor, `*` bush.
 
-| Map | Layout |
-|---|---|
-| Arena | The original practice arena, flags on the left and right middle, respawn squares in the top corners. |
-| Crossfire | Open middle with cover blocks; each flag in a U of walls. Respawn squares top left and top right. |
-| Fortress | Walled-in rooms with narrow doors (respawn squares in the top rooms, flags in the middle ones); crates near the doors can be pushed in as barricades. |
-| Canyon | Three long lanes split by walls, joined in the middle and at the ends. Respawn squares at the top ends. |
-| Classroom | Wooden floor packed with 30 movable beds in rows, 4 px apart side by side, with one-tile aisles between rows. Push beds aside to cut through. Flags on the left and right edges; respawn squares in opposite corners behind a short wall. |
-| Garden | Grass, a house with one wooden room per team and doors in its outer walls, a pool along the top. Respawn squares in the top corners. |
-| Crossroads | Light tiles, plus-shaped walls, notches along the edges, a centre block. Each team's flag and respawn square in opposite corners. |
+- **Desks** are one-tile furniture: heavy, pushable, they stop bullets and never break.
+- **Bushes** are decoration only: you walk through them and bullets fly over them.
+- **Water** blocks walking and sliding bodies, but bullets fly over it.
 
-Classroom, Garden and Crossroads recreate the layouts of the original app's capture-the-flag
-maps in our own art. **Water** blocks walking and sliding bodies, but bullets fly over it.
+| Map | Theme | Layout |
+|---|---|---|
+| Arena | Stone | The classic practice arena, now mirrored. Each flag behind a 5 × 2 wall facing the middle, so attackers go round the top or bottom. Cover blocks, 8 crates, 2 power boxes in the open centre. |
+| Crossfire | Stone | Open middle around a 2 × 2 pillar. Each flag in a U of walls that opens towards its own back wall: no straight shot from the middle, but chasers can follow a carrier in. Power boxes beside the pillar. |
+| Fortress | Stone | A walled band around each flag with 2-tile doors top and bottom and an open front; rooms behind it with doors and gaps, no dead ends. Crates by the doors to push in as barricades. 4 power boxes in the top and bottom lanes. |
+| Canyon | Stone | Three long lanes split by long walls, joined in the middle. Flags at the ends of the middle lane behind edge stubs, with a crate for defenders. Power boxes in the middle lane, 7 tiles from each flag. |
+| Classroom | Wood | 22 movable beds in rows with one-tile aisles, an open centre with the 2 power boxes. Flags on the left and right edges by the teacher's desks. Respawn squares in opposite corners behind a short wall. |
+| Garden | Grass | A wooden house split by a 2-wide centre wall, each team's flag against it in the upper room (three ways in). Pool along the top with a walled island of bushes. The bottom grass strip is the only route between the sides. |
+| Crossroads | Tiles | Plus- and T-shaped walls, notches on every edge, a long centre bar. Each team's flag and respawn square in opposite corners of the same side. Power boxes above and below the centre block. |
+| Office | Office | Orange office floor with white washroom corridors along the top and bottom (respawn squares in their corner closets). Each flag in front of a cluster of 8 desks around a crate, in a pocket made by an L wall. |
+| Open Field | Grass | Open grass with 2 big blocks and 2 small pillars. Small wooden bases with corner posts on the left and right edges hold the flags; respawn squares in wooden alcoves in opposite corners; bushes in two corners. |
 
-Practice any map solo with `/play?map=<id>` (e.g. `/play?map=garden`).
+Classroom, Garden, Crossroads, Office and Open Field recreate the layouts of the original app's
+capture-the-flag maps (a grid laid over frames of the original) in our own art.
 
-Every map except Arena is exactly fair: Blue's side is Red's mirrored (Crossfire, Fortress,
-Canyon, Garden) or rotated half a turn (Classroom, Crossroads). `shared/src/maps.test.ts` checks every map: right size, nothing inside walls or water, every
-spawn can reach both flags and every power box, respawn squares clear of walls and away from
-the flags, nothing starting on top of anything else, and the symmetry.
+Practice any map solo with `/play?map=<id>` (ids: `arena`, `crossfire`, `fortress`, `canyon`,
+`classroom`, `garden`, `crossroads`, `office`, `field`).
+
+Every map is exactly fair: Blue's side is Red's mirrored (Arena, Crossfire, Fortress, Canyon,
+Garden) or turned half a turn (Classroom, Crossroads, Office, Open Field). With 18 rows there is
+no centre row, so on the half-turn maps the two flags sit one row apart.
+`shared/src/maps.test.ts` checks every map: right size, nothing inside walls or water, every
+spawn can reach both flags and every power box, respawn squares clear of walls, more than 3
+tiles from their own flag and more than 6 from the enemy's, cover (wall, desk, bed or crate)
+within 3 tiles of each flag stand, 2–4 power boxes each more than 4 tiles from both flags, no
+reachable dead ends, nothing starting on top of anything else, and the symmetry.
 
 When creating a room you pick a map for each round (tap a round, then a map; tapping maps in
 order fills the rounds in order). Rounds you don't change cycle through the maps. The join page

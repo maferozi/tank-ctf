@@ -27,6 +27,7 @@ export class InputQueue {
 
   push(frames: readonly InputFrame[]): void {
     for (const f of frames) {
+      if (!f || typeof f !== "object") continue; // malformed client message: never crash the room
       if (!Number.isInteger(f.seq) || f.seq <= this.lastQueued) continue; // duplicate or out of order
       this.queue.push({ seq: f.seq, held: f.held === true, pressed: f.pressed === true });
       this.lastQueued = f.seq;
@@ -62,11 +63,15 @@ const MAX_PENDING = 120;
 
 // Client side: owns the predicted present. Other players are assumed to keep their button
 // as last seen, which is right most of the time and corrected by the next snapshot.
+// This runs every tick on phones, so it avoids garbage: `prev` is one buffer that is
+// copied into, and a snapshot costs a single clone of the server state.
 export class Predictor {
   state: GameState | null = null; // predicted present (after the latest local sample)
   prev: GameState | null = null; // one tick earlier, for smooth drawing between ticks
   private pending: InputFrame[] = [];
   private seq = 0;
+  private inputs: Record<string, TankInput> = {}; // reused for every step
+  private ownInput: TankInput = { held: false, pressed: false };
 
   constructor(
     private localId: string,
@@ -80,22 +85,22 @@ export class Predictor {
     this.pending.push(frame);
     if (this.pending.length > MAX_PENDING) this.pending.shift();
     if (!this.state) return { frame, events: [] };
-    this.prev = cloneState(this.state);
+    this.prev = copyInto(this.prev, this.state);
     this.advance(this.state, frame);
     return { frame, events: this.state.events };
   }
 
   // A new server state where our samples up to `ack` were applied: start from it and
-  // replay the rest.
+  // replay the rest. `server` is not changed.
   reconcile(server: GameState, ack: number): void {
-    this.pending = this.pending.filter((f) => f.seq > ack);
+    let drop = 0;
+    while (drop < this.pending.length && this.pending[drop]!.seq <= ack) drop++;
+    if (drop) this.pending.splice(0, drop);
     const state = cloneState(server);
-    let prev = cloneState(state);
-    for (const frame of this.pending) {
-      prev = cloneState(state);
-      this.advance(state, frame);
-    }
-    this.prev = prev;
+    const last = this.pending.length - 1;
+    for (let i = 0; i < last; i++) this.advance(state, this.pending[i]!);
+    this.prev = copyInto(this.prev, state);
+    if (last >= 0) this.advance(state, this.pending[last]!);
     this.state = state;
   }
 
@@ -104,8 +109,66 @@ export class Predictor {
   }
 
   private advance(state: GameState, frame: InputFrame): void {
-    const inputs: Record<string, TankInput> = {};
-    for (const t of state.tanks) inputs[t.id] = t.id === this.localId ? frame : { held: t.held, pressed: false };
+    const inputs = this.inputs;
+    for (const t of state.tanks) {
+      if (t.id === this.localId) {
+        this.ownInput.held = frame.held;
+        this.ownInput.pressed = frame.pressed;
+        inputs[t.id] = this.ownInput;
+      } else {
+        const input = (inputs[t.id] ??= { held: false, pressed: false });
+        input.held = t.held;
+        input.pressed = false;
+      }
+    }
     step(state, getMap(state.mapId), inputs, this.config); // the map can change between rounds
   }
+}
+
+// Makes `dst` a deep copy of `src` (plain data), reusing dst's objects and arrays where
+// they have the same keys, and returns it. Only for states that are drawn, not stepped.
+export function copyInto<T>(dst: T | null, src: T): T {
+  return copyValue(dst, src) as T;
+}
+
+type Obj = Record<string, unknown>;
+
+function copyValue(dst: unknown, src: unknown): unknown {
+  if (typeof src !== "object" || src === null) return src;
+  if (Array.isArray(src)) {
+    const out: unknown[] = Array.isArray(dst) ? dst : [];
+    out.length = src.length;
+    for (let i = 0; i < src.length; i++) out[i] = copyValue(out[i], src[i]);
+    return out;
+  }
+  const from = src as Obj;
+  const to = dst as Obj;
+  const reuse = typeof dst === "object" && dst !== null && !Array.isArray(dst);
+  // Flat objects (soldiers, bullets, crates...) are the common case: Object.assign is
+  // far faster than copying key by key.
+  if (reuse && isFlatWithSameKeys(to, from)) return Object.assign(to, from);
+  const out: Obj = reuse && sameKeys(to, from) ? to : {};
+  for (const k in from) out[k] = copyValue(out[k], from[k]);
+  return out;
+}
+
+function isFlatWithSameKeys(a: Obj, b: Obj): boolean {
+  let n = 0;
+  for (const k in b) {
+    const v = b[k];
+    if ((typeof v === "object" && v !== null) || !(k in a)) return false;
+    n++;
+  }
+  for (const _k in a) n--;
+  return n === 0;
+}
+
+function sameKeys(a: Obj, b: Obj): boolean {
+  let n = 0;
+  for (const k in a) {
+    if (!(k in b)) return false;
+    n++;
+  }
+  for (const _k in b) n--;
+  return n === 0;
 }

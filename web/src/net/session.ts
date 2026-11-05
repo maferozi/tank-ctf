@@ -1,5 +1,17 @@
 import { Client, type Room } from "@colyseus/sdk";
-import { MSG, ROOM_NAME, type CreateOptions, type JoinOptions, type RoomInfo, type Roster, type Team } from "@tank/shared";
+import {
+  MSG,
+  ROOM_NAME,
+  SnapshotDecoder,
+  type CreateOptions,
+  type JoinOptions,
+  type RoomInfo,
+  type Roster,
+  type Snapshot,
+  type SnapshotMessage,
+  type Team,
+} from "@tank/shared";
+import { createVoiceChat, type VoiceChat } from "./voice";
 
 // The one live connection to a game room. Kept outside React so it survives the
 // navigation from the home page to /room/CODE.
@@ -8,6 +20,10 @@ export interface Session {
   roster: Roster | null; // null until the server's first roster arrives
   left: boolean; // the connection closed for good
   subscribe(listener: () => void): () => void; // roster or connection changes
+  // Decoded game snapshots (the server sends deltas; see SnapshotMessage).
+  onSnapshot(listener: (snap: Snapshot) => void): () => void;
+  decoder: SnapshotDecoder; // for stats
+  voice: VoiceChat; // voice chat with the players you can hear (see voice.ts)
   setTeam(team: Team): void; // lobby: switch your own team
   movePlayer(playerId: string, team: Team): void; // lobby, host only
   start(): void; // lobby, host only
@@ -61,9 +77,16 @@ function forgetToken(code: string): void {
   }
 }
 
+// If a requested keyframe doesn't come (it should be the very next snapshot), ask again.
+const KEYFRAME_RETRY_MS = 500;
+
 function track(room: Room): Session {
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((l) => l());
+  const snapshotListeners = new Set<(snap: Snapshot) => void>();
+  const decoder = new SnapshotDecoder();
+  const voice = createVoiceChat(room);
+  let keyframeAskedAt = -Infinity;
   const session: Session = {
     room,
     roster: null,
@@ -72,26 +95,56 @@ function track(room: Room): Session {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    onSnapshot(listener) {
+      snapshotListeners.add(listener);
+      return () => snapshotListeners.delete(listener);
+    },
+    decoder,
+    voice,
     setTeam: (team) => room.send(MSG.team, { team }),
     movePlayer: (playerId, team) => room.send(MSG.move, { playerId, team }),
     start: () => room.send(MSG.start),
     async leave() {
       forgetToken(room.roomId);
       if (current === session) current = null;
+      voice.dispose(); // stops the mic and says bye to every voice peer
       await room.leave(true);
     },
   };
   saveToken(room);
   // The SDK reconnects by itself after a network blip; the token changes when it does.
-  room.onReconnect(() => saveToken(room));
+  room.onReconnect(() => {
+    saveToken(room);
+    decoder.reset(); // the server sends a keyframe after a reconnect
+    voice.reconnected();
+  });
   room.onMessage(MSG.roster, (roster: Roster) => {
     session.roster = roster;
-    notify();
+    notify(); // first: nothing in voice may hold up the room screen
+    try {
+      voice.setRoster(roster);
+    } catch (err) {
+      console.warn("voice: roster update failed", err);
+    }
   });
-  // Snapshots can arrive before the game screen subscribes; ignore those quietly.
-  room.onMessage(MSG.snapshot, () => {});
+  // Decoded here, not in the game screen, so the delta chain is unbroken however long the
+  // screen takes to subscribe (snapshots arriving before that are just not shown).
+  room.onMessage(MSG.snapshot, (msg: SnapshotMessage) => {
+    const snap = decoder.decode(msg);
+    if (!snap) {
+      const now = performance.now();
+      if (now - keyframeAskedAt > KEYFRAME_RETRY_MS) {
+        keyframeAskedAt = now;
+        room.send(MSG.keyframe);
+      }
+      return;
+    }
+    keyframeAskedAt = -Infinity;
+    snapshotListeners.forEach((l) => l(snap));
+  });
   room.onLeave(() => {
     session.left = true;
+    voice.dispose();
     forgetToken(room.roomId);
     notify();
   });

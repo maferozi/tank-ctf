@@ -140,6 +140,13 @@ const SOUNDS = {
     if (!v) return;
     hiss(v.out, v.t, { dur: 0.04, vol: 0.12, filter: "bandpass", freq: 2500, q: 3 });
   },
+  // A crate breaks: a woody crack over a short crunch.
+  crateBreak(where: Where) {
+    const v = voice(where);
+    if (!v) return;
+    hiss(v.out, v.t, { dur: 0.16, vol: 0.4, filter: "bandpass", freq: 900, to: 300, q: 1.5 });
+    tone(v.out, v.t, { type: "square", freq: 140, to: 70, dur: 0.12, vol: 0.12 });
+  },
   // Someone goes down: an impact thud and a falling groan.
   kill(where: Where) {
     const v = voice(where);
@@ -169,6 +176,14 @@ const SOUNDS = {
     tone(v.out, v.t, { freq: 1250, dur: 0.3, vol: 0.2 });
     tone(v.out, v.t, { freq: 1870, dur: 0.22, vol: 0.12 });
     hiss(v.out, v.t, { dur: 0.03, vol: 0.2, freq: 4000 });
+  },
+  // A shield's last hit: the bubble shatters like glass, a bright crash sliding down.
+  shieldBreak(where: Where) {
+    const v = voice(where);
+    if (!v) return;
+    hiss(v.out, v.t, { dur: 0.35, vol: 0.4, filter: "bandpass", freq: 6000, to: 1800, q: 1.2 });
+    tone(v.out, v.t, { type: "triangle", freq: 1870, to: 620, dur: 0.32, vol: 0.18 });
+    [2490, 2960, 2220].forEach((f, i) => tone(v.out, v.t, { freq: f, dur: 0.12, vol: 0.08, delay: 0.03 + i * 0.045 }));
   },
   // Power picked up: a quick rising arpeggio, different for each power.
   power(where: Where, kind: "shield" | "speed" | "flare") {
@@ -250,6 +265,7 @@ export function playEvents(events: readonly GameEvent[], view: SoundView): void 
   for (const e of events) {
     const mine = e.tankId === view.localId;
     if (e.type === "drop" && mine) SOUNDS.drop(where(e.x, e.y, true));
+    if (e.type === "crateBreak") SOUNDS.crateBreak(where(e.x, e.y, mine));
     if (e.type === "kill") {
       if (mine) SOUNDS.died();
       else {
@@ -258,6 +274,7 @@ export function playEvents(events: readonly GameEvent[], view: SoundView): void 
       }
     }
     if (e.type === "shieldHit") SOUNDS.shieldHit(where(e.x, e.y, mine));
+    if (e.type === "shieldBreak") SOUNDS.shieldBreak(where(e.x, e.y, mine));
     if (e.type === "power") SOUNDS.power(where(e.x, e.y, mine), e.kind);
     if (e.type === "flag") {
       // e.team is whose flag it is.

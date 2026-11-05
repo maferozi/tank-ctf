@@ -7,20 +7,30 @@ import {
   BULLET_SPEED,
   CARRIER_SPEED,
   CRATE_BREAKAWAY_MS,
+  CRATE_BREAKS,
   CRATE_MASS,
   CRATE_SIZE,
   CRATE_STATIC,
+  DESK_MASS,
+  DESK_SIZE,
+  DRIVE_RAMP_MS,
   DRIVE_SPEED,
+  DRIVE_START,
   FIRE_COOLDOWN_MS,
   FLARE_INTERVAL_MS,
   FLARE_MS,
   HIT_KNOCKBACK,
   MAX_AMMO,
   POWER_BOX_SIZE,
-  POWER_RESPAWN_MS,
+  POWER_RESPAWN_MAX_MS,
+  POWER_RESPAWN_MIN_MS,
+  POWER_START_MAX_MS,
+  POWER_START_MIN_MS,
+  PUSH_GRIP,
   RELOAD_MS,
   RESPAWN_MS,
   RAPID_FIRE_MS,
+  SHIELD_HITS,
   SHIELD_MS,
   SPEED_BOOST,
   SPEED_MS,
@@ -31,12 +41,13 @@ import {
   TANK_MASS,
   TANK_RADIUS,
   TICK_MS,
+  UNLIMITED_AMMO,
 } from "./constants";
 import { createFlags, dropFlagOf, isCarrying, tickFlags, type Flag } from "./flags";
 import { circleHitsWall, type GameMap, type Team } from "./map";
 import { getMap } from "./maps";
 import { advanceMatch, createMatch, type Match, type MatchRounds } from "./match";
-import { contact, resolveContacts, shove, type Body } from "./physics";
+import { contact, pushFace, resolveContacts, shove, type Body } from "./physics";
 
 export interface Tank {
   id: string;
@@ -51,10 +62,12 @@ export interface Tank {
   held: boolean;
   pressMs: number; // how long the current press has lasted
   driving: boolean; // press has passed holdMs
+  driveMs: number; // how long it has been walking this press (walking speeds up)
   cooldownMs: number;
   ammo: number;
   reloadMs: number; // progress towards the next round
   shieldMs: number; // power-ups: time left, 0 = inactive
+  shieldHits: number; // bullets the shield can still stop; the last one pops it
   speedMs: number;
   flareMs: number;
   flareTimerMs: number; // time until the next flare burst
@@ -79,37 +92,42 @@ export interface Bullet {
 }
 
 // A movable obstacle. Heavy, blocks bullets, and "sticks" before it starts sliding.
-// A bed is a bigger, heavier one (BED_SIZE, BED_MASS).
+// A bed is a bigger, heavier one (BED_SIZE, BED_MASS); a desk a slightly bigger, heavier
+// one (DESK_SIZE, DESK_MASS). Plain crates break when shot (CRATE_BREAKS); beds and desks never do.
 export interface Crate {
   id: number;
   x: number;
   y: number;
   pushMs: number; // how long it has been pushed recently; loosens it up
   bed?: boolean;
+  desk?: boolean;
 }
 
 export type PowerKind = "shield" | "speed" | "flare";
 export const POWER_KINDS: readonly PowerKind[] = ["shield", "speed", "flare"];
 
 // Touch it to get a random power. A tank that already has a power can't take it:
-// for that tank it is a solid box that pushes like a crate. Once taken it comes back
-// at its home spot after POWER_RESPAWN_MS.
+// for that tank it is a solid box that pushes like a crate. Boxes start each round hidden
+// and appear after a random POWER_START_MIN_MS..POWER_START_MAX_MS; once taken a box comes
+// back at its home spot after a random POWER_RESPAWN_MIN_MS..POWER_RESPAWN_MAX_MS.
 export interface PowerBox {
   id: number;
   x: number;
   y: number;
   homeX: number;
   homeY: number;
-  respawnMs: number; // 0 = on the map and can be taken
+  respawnMs: number; // 0 = on the map and can be taken; > 0 = hidden, back after this long
   pushMs: number; // same "sticks, then slides" feel as a crate
 }
 
 export type GameEvent =
   | { type: "fire"; tankId: string; x: number; y: number }
   | { type: "drop"; tankId: string; x: number; y: number } // bullet ran out of range
+  | { type: "crateBreak"; tankId: string; x: number; y: number } // tankId = shooter
   | { type: "kill"; tankId: string; by: string; x: number; y: number }
   | { type: "power"; tankId: string; kind: PowerKind; x: number; y: number }
-  | { type: "shieldHit"; tankId: string; x: number; y: number }
+  | { type: "shieldHit"; tankId: string; x: number; y: number } // shield stopped a bullet
+  | { type: "shieldBreak"; tankId: string; x: number; y: number } // and that was its last hit
   | { type: "flag"; action: "taken" | "dropped" | "returned"; team: Team; tankId: string; x: number; y: number }
   | { type: "capture"; team: Team; tankId: string; x: number; y: number } // team = winner
   | { type: "round"; tankId: string; x: number; y: number }; // a new round started
@@ -142,10 +160,14 @@ export interface SimConfig {
 }
 
 // Pass the map to place its crates, power boxes and flags; without one the arena starts
-// empty (handy in tests). For real matches use createMatchState.
-export function createState(map?: GameMap, rounds: MatchRounds = 1, maps?: readonly unknown[]): GameState {
+// empty (handy in tests). For real matches use createMatchState. `seed` starts the power-up
+// rolls: the server and solo pass a fresh one per match (picked outside the sim), so box
+// timings and kinds differ every game; it then travels in snapshots for prediction.
+export const DEFAULT_SEED = 0x2f6b1d3;
+
+export function createState(map?: GameMap, rounds: MatchRounds = 1, maps?: readonly unknown[], seed = DEFAULT_SEED): GameState {
   const match = createMatch(rounds, maps);
-  return {
+  const state: GameState = {
     tick: 0,
     tanks: [],
     bullets: [],
@@ -154,24 +176,27 @@ export function createState(map?: GameMap, rounds: MatchRounds = 1, maps?: reado
     overMs: 0,
     match,
     mapId: map?.id ?? match.maps[0]!,
-    rng: 0x2f6b1d3,
+    rng: seed | 0,
     nextBulletId: 1,
     events: [],
   };
+  hidePowerBoxes(state);
+  return state;
 }
 
 // A match: `rounds` picks single match (1) or tournament (5 / 7), `maps` the map for each
 // round. The first round's map is set up.
-export function createMatchState(rounds: MatchRounds, maps?: readonly unknown[]): GameState {
+export function createMatchState(rounds: MatchRounds, maps?: readonly unknown[], seed = DEFAULT_SEED): GameState {
   const match = createMatch(rounds, maps);
-  return createState(getMap(match.maps[0]!), rounds, match.maps);
+  return createState(getMap(match.maps[0]!), rounds, match.maps, seed);
 }
 
 function mapObjects(map?: GameMap): Pick<GameState, "crates" | "powerBoxes" | "flags"> {
   return {
     crates: [
-      ...(map?.crates ?? []).map((c) => ({ x: c.x, y: c.y, pushMs: 0 })),
-      ...(map?.beds ?? []).map((b) => ({ x: b.x, y: b.y, pushMs: 0, bed: true })),
+      ...(map?.crates ?? []).map((c): Omit<Crate, "id"> => ({ x: c.x, y: c.y, pushMs: 0 })),
+      ...(map?.beds ?? []).map((b): Omit<Crate, "id"> => ({ x: b.x, y: b.y, pushMs: 0, bed: true })),
+      ...(map?.desks ?? []).map((d): Omit<Crate, "id"> => ({ x: d.x, y: d.y, pushMs: 0, desk: true })),
     ].map((c, i) => ({ id: i + 1, ...c })),
     powerBoxes: (map?.powerBoxes ?? []).map((p, i) => ({
       id: i + 1,
@@ -212,17 +237,19 @@ export function addTank(state: GameState, map: GameMap, id: string, team: Team):
     x: 0,
     y: 0,
     angle: 0,
-    spinDir: 1,
+    spinDir: -1, // counter-clockwise on screen, like the original
     spinPauseMs: 0,
     lastPressTick: -1e9, // finite so the state stays JSON/network safe
     aimAngle: 0,
     held: false,
     pressMs: 0,
     driving: false,
+    driveMs: 0,
     cooldownMs: 0,
     ammo: MAX_AMMO,
     reloadMs: 0,
     shieldMs: 0,
+    shieldHits: 0,
     speedMs: 0,
     flareMs: 0,
     flareTimerMs: 0,
@@ -291,6 +318,7 @@ export function step(
       tank.held = false;
       tank.pressMs = 0;
       tank.driving = false;
+      tank.driveMs = 0;
       continue;
     }
 
@@ -332,12 +360,14 @@ export function step(
     tank.held = input.held;
 
     if (tank.driving) {
-      const dist = walkSpeed(state, tank) * dt;
-      shove(tankBody(tank), map, Math.cos(tank.angle) * dist, Math.sin(tank.angle) * dist);
-    } else if (tank.spinPauseMs > 0) {
-      tank.spinPauseMs -= TICK_MS;
+      tank.driveMs += TICK_MS;
+      const dist = currentWalkSpeed(state, tank) * dt;
+      const move = gripBoxFace(state, tank, Math.cos(tank.angle) * dist, Math.sin(tank.angle) * dist);
+      shove(tankBody(tank), map, move.x, move.y);
     } else {
-      tank.angle = wrapAngle(tank.angle + tank.spinDir * SPIN_SPEED * dt);
+      tank.driveMs = 0;
+      if (tank.spinPauseMs > 0) tank.spinPauseMs -= TICK_MS;
+      else tank.angle = wrapAngle(tank.angle + tank.spinDir * SPIN_SPEED * dt);
     }
   }
 
@@ -349,8 +379,38 @@ export function step(
   tickFlags(state);
 }
 
+// Walking into the face of a crate, desk, bed or (solid) power box: the soldier grips the face
+// like friction, so the sideways part of its step, up to PUSH_GRIP times the forward part, is
+// dropped. It then pushes the box straight on instead of sliding along the face and round
+// the corner. Steeper headings keep the rest of their sideways step and slide. A soldier
+// beside the corner (centre past the face's edge) only grips when stepping towards the box;
+// stepping away, they slip past the corner instead of sticking to it.
+function gripBoxFace(state: GameState, tank: Tank, dx: number, dy: number): { x: number; y: number } {
+  const ahead: Body = { pos: { x: tank.x + dx, y: tank.y + dy }, shape: "circle", size: TANK_RADIUS, mass: TANK_MASS };
+  const hx = Math.cos(tank.angle);
+  const hy = Math.sin(tank.angle);
+  const boxes = [...state.crates.map(crateBody), ...(hasPower(tank) ? solidPowerBoxes(state).map(powerBoxBody) : [])];
+  for (const b of boxes) {
+    const face = pushFace(ahead, b, hx, hy);
+    if (!face) continue;
+    const alongX = face.nx !== 0;
+    const side = alongX ? dy : dx;
+    const toBox = alongX ? b.pos.y - tank.y : b.pos.x - tank.x;
+    if (Math.abs(toBox) > b.size && Math.sign(side) !== Math.sign(toBox)) return { x: dx, y: dy };
+    const grip = (forward: number) => Math.sign(side) * Math.max(0, Math.abs(side) - PUSH_GRIP * Math.abs(forward));
+    return alongX ? { x: dx, y: grip(dx) } : { x: grip(dy), y: dy };
+  }
+  return { x: dx, y: dy };
+}
+
 function walkSpeed(state: GameState, tank: Tank): number {
   return DRIVE_SPEED * (tank.speedMs > 0 ? SPEED_BOOST : 1) * (isCarrying(state, tank.id) ? CARRIER_SPEED : 1);
+}
+
+// Walking starts at DRIVE_START of full speed and speeds up over DRIVE_RAMP_MS.
+function currentWalkSpeed(state: GameState, tank: Tank): number {
+  const ramp = DRIVE_RAMP_MS > 0 ? Math.min(1, tank.driveMs / DRIVE_RAMP_MS) : 1;
+  return walkSpeed(state, tank) * (DRIVE_START + (1 - DRIVE_START) * ramp);
 }
 
 // A fallen body keeps the momentum it had and slides to a stop; walls stop it dead.
@@ -371,7 +431,7 @@ function slideBody(tank: Tank, map: GameMap, dt: number): void {
 // along the bullet's path. Any flag they carried drops where they fall.
 function killTank(state: GameState, t: Tank, bullet: Bullet): void {
   if (t.driving) {
-    const speed = walkSpeed(state, t);
+    const speed = currentWalkSpeed(state, t);
     t.vx = Math.cos(t.angle) * speed;
     t.vy = Math.sin(t.angle) * speed;
     t.fallAngle = t.angle;
@@ -383,6 +443,7 @@ function killTank(state: GameState, t: Tank, bullet: Bullet): void {
   }
   t.alive = false;
   t.driving = false;
+  t.driveMs = 0;
   clearPowers(t);
   t.respawnMs = RESPAWN_MS;
   state.events.push({ type: "kill", tankId: t.id, by: bullet.owner, x: t.x, y: t.y });
@@ -393,6 +454,7 @@ function killTank(state: GameState, t: Tank, bullet: Bullet): void {
 // powers, flags home, crates and power boxes back where the map puts them.
 export function resetRound(state: GameState, map: GameMap): void {
   Object.assign(state, mapObjects(map));
+  hidePowerBoxes(state);
   state.mapId = map.id;
   state.winner = null;
   state.overMs = 0;
@@ -405,6 +467,7 @@ export function resetRound(state: GameState, map: GameMap): void {
       held: false,
       pressMs: 0,
       driving: false,
+      driveMs: 0,
       cooldownMs: 0,
       ammo: MAX_AMMO,
       reloadMs: 0,
@@ -419,6 +482,15 @@ export function resetRound(state: GameState, map: GameMap): void {
 
 function powerBoxBody(p: PowerBox): Body {
   return heavyBoxBody(p, POWER_BOX_SIZE);
+}
+
+function solidPowerBoxes(state: GameState): PowerBox[] {
+  return state.powerBoxes.filter((p) => p.respawnMs <= 0);
+}
+
+// A round starts with every power box hidden, each appearing after its own random delay.
+function hidePowerBoxes(state: GameState): void {
+  for (const box of state.powerBoxes) box.respawnMs = randomMs(state, POWER_START_MIN_MS, POWER_START_MAX_MS);
 }
 
 // Boxes count down while taken. A tank touching an available box takes it, unless it
@@ -440,8 +512,8 @@ function collectPowerBoxes(state: GameState): void {
 }
 
 function takePowerBox(state: GameState, box: PowerBox, tank: Tank): void {
-  box.respawnMs = POWER_RESPAWN_MS;
   givePower(state, tank, POWER_KINDS[nextRandom(state) % POWER_KINDS.length]!);
+  box.respawnMs = randomMs(state, POWER_RESPAWN_MIN_MS, POWER_RESPAWN_MAX_MS);
 }
 
 export function hasPower(t: Tank): boolean {
@@ -451,7 +523,10 @@ export function hasPower(t: Tank): boolean {
 // A tank holds one power at a time, so this replaces any power it had.
 export function givePower(state: GameState, tank: Tank, kind: PowerKind): void {
   clearPowers(tank);
-  if (kind === "shield") tank.shieldMs = SHIELD_MS;
+  if (kind === "shield") {
+    tank.shieldMs = SHIELD_MS;
+    tank.shieldHits = SHIELD_HITS;
+  }
   if (kind === "speed") tank.speedMs = SPEED_MS;
   if (kind === "flare") {
     tank.flareMs = FLARE_MS;
@@ -461,7 +536,9 @@ export function givePower(state: GameState, tank: Tank, kind: PowerKind): void {
 }
 
 function tickPowers(state: GameState, tank: Tank): void {
-  tank.shieldMs = Math.max(0, tank.shieldMs - TICK_MS);
+  // Epsilon: summed TICK_MS can leave a sliver of a whole-second SHIELD_MS.
+  tank.shieldMs = tank.shieldMs - TICK_MS > 1e-6 ? tank.shieldMs - TICK_MS : 0;
+  if (tank.shieldMs === 0) tank.shieldHits = 0;
   tank.speedMs = Math.max(0, tank.speedMs - TICK_MS);
   // Epsilon: summed TICK_MS leaves a sliver of flareMs when FLARE_MS is a whole number
   // of intervals, which would fire one burst too many right as the flare ends.
@@ -480,6 +557,7 @@ function tickPowers(state: GameState, tank: Tank): void {
 
 function clearPowers(tank: Tank): void {
   tank.shieldMs = 0;
+  tank.shieldHits = 0;
   tank.speedMs = 0;
   tank.flareMs = 0;
   tank.flareTimerMs = 0;
@@ -494,16 +572,25 @@ function nextRandom(state: GameState): number {
   return (t ^ (t >>> 14)) >>> 0;
 }
 
+// A whole number of ms in [min, max], rolled from the state's seed.
+function randomMs(state: GameState, min: number, max: number): number {
+  return min + (nextRandom(state) % (max - min + 1));
+}
+
 function tankBody(t: Tank): Body {
   const mass = !t.alive ? BODY_MASS : t.driving ? TANK_MASS : TANK_MASS * IDLE_TANK_BRAKE;
-  return { pos: t, shape: "circle", size: TANK_RADIUS, mass };
+  // A walking soldier pushes boxes square along the face it walks into (see pushFace).
+  const heading = t.alive && t.driving ? { x: Math.cos(t.angle), y: Math.sin(t.angle) } : undefined;
+  return { pos: t, shape: "circle", size: TANK_RADIUS, mass, heading };
 }
 
 function crateBody(c: Crate): Body {
-  return c.bed ? heavyBoxBody(c, BED_SIZE, BED_MASS) : heavyBoxBody(c, CRATE_SIZE);
+  if (c.bed) return heavyBoxBody(c, BED_SIZE, BED_MASS);
+  if (c.desk) return heavyBoxBody(c, DESK_SIZE, DESK_MASS);
+  return heavyBoxBody(c, CRATE_SIZE);
 }
 
-// Crates, beds and power boxes: heavy, and stuck at first until pushed for CRATE_BREAKAWAY_MS.
+// Crates, beds, desks and power boxes: heavy, and stuck at first until pushed for CRATE_BREAKAWAY_MS.
 function heavyBoxBody(box: Crate | PowerBox, size: number, mass = CRATE_MASS): Body {
   const stuck = 1 - Math.min(1, box.pushMs / CRATE_BREAKAWAY_MS);
   return { pos: box, shape: "box", size: size / 2, mass: mass * (1 + (CRATE_STATIC - 1) * stuck) };
@@ -512,13 +599,13 @@ function heavyBoxBody(box: Crate | PowerBox, size: number, mass = CRATE_MASS): B
 // Tanks, crates and power boxes on the map never overlap; pushing is decided by weight
 // (see resolveContacts).
 function pushBodies(state: GameState, map: GameMap): void {
-  const boxes = [...state.crates, ...state.powerBoxes.filter((p) => p.respawnMs <= 0)];
+  const boxes = [...state.crates, ...solidPowerBoxes(state)];
   const bodies = [
     // Fallen soldiers stay solid where they lie: they can be pushed, and they still
     // shield their team from bullets wherever they end up.
     ...state.tanks.map(tankBody),
     ...state.crates.map(crateBody),
-    ...state.powerBoxes.filter((p) => p.respawnMs <= 0).map(powerBoxBody),
+    ...solidPowerBoxes(state).map(powerBoxBody),
   ];
   const pushed = new Set<object>();
   resolveContacts(bodies, map, (b) => pushed.add(b.pos));
@@ -531,9 +618,9 @@ function pushBodies(state: GameState, map: GameMap): void {
 }
 
 function fire(state: GameState, tank: Tank): void {
-  if (tank.cooldownMs > 0 || tank.ammo <= 0) return;
+  if (tank.cooldownMs > 0 || (!UNLIMITED_AMMO && tank.ammo <= 0)) return;
   tank.cooldownMs = FIRE_COOLDOWN_MS;
-  tank.ammo--;
+  if (!UNLIMITED_AMMO) tank.ammo--;
   spawnBullet(state, tank, tank.angle);
 }
 
@@ -564,10 +651,15 @@ function stepBullets(state: GameState, map: GameMap, dt: number): void {
     b.rangeLeft -= BULLET_SPEED * dt;
     if (circleHitsWall(map, b.x, b.y, BULLET_RADIUS)) return false;
     const bulletBody: Body = { pos: b, shape: "circle", size: BULLET_RADIUS, mass: 0 };
-    // Crates and power boxes stop bullets (shooting a power box does not take it).
-    const blocked =
-      state.crates.some((c) => contact(bulletBody, crateBody(c))) ||
-      state.powerBoxes.some((p) => p.respawnMs <= 0 && contact(bulletBody, powerBoxBody(p)));
+    // Crates and power boxes stop bullets (shooting a power box does not take it). With
+    // CRATE_BREAKS a crate breaks when shot; beds and desks don't.
+    const crate = state.crates.find((c) => contact(bulletBody, crateBody(c)));
+    if (crate && CRATE_BREAKS && !crate.bed && !crate.desk) {
+      state.crates = state.crates.filter((c) => c !== crate);
+      state.events.push({ type: "crateBreak", tankId: b.owner, x: crate.x, y: crate.y });
+      return false;
+    }
+    const blocked = crate || solidPowerBoxes(state).some((p) => contact(bulletBody, powerBoxBody(p)));
     if (blocked) {
       state.events.push({ type: "drop", tankId: b.owner, x: b.x, y: b.y });
       return false;
@@ -587,7 +679,15 @@ function stepBullets(state: GameState, map: GameMap, dt: number): void {
       const dy = t.y - b.y;
       if (dx * dx + dy * dy <= hitR * hitR) {
         if (t.shieldMs > 0) {
-          state.events.push({ type: "shieldHit", tankId: t.id, x: b.x, y: b.y });
+          // Each bullet uses up one hit; the last one pops the shield.
+          t.shieldHits--;
+          if (t.shieldHits <= 0) {
+            t.shieldMs = 0;
+            t.shieldHits = 0;
+            state.events.push({ type: "shieldBreak", tankId: t.id, x: b.x, y: b.y });
+          } else {
+            state.events.push({ type: "shieldHit", tankId: t.id, x: b.x, y: b.y });
+          }
           return false;
         }
         killTank(state, t, b);

@@ -37,7 +37,7 @@ export function SpriteSheet() {
       drawSoldier(ctx, { ...at(1), driving: true }, false, 110);
       drawSoldier(ctx, { ...at(2), driving: true }, false, 330);
       drawSoldier(ctx, { ...at(3), held: true, pressMs: 35 }, true, 0);
-      drawBullet(ctx, 4 * CELL + CELL / 2, cy, -0.4, 300);
+      drawBullet(ctx, 4 * CELL + CELL / 2, cy, -0.4, 300, team);
       drawFallenSoldier(ctx, { ...at(5), alive: false, respawnMs: 1000 }, 0);
     });
   }, []);

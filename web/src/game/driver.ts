@@ -14,6 +14,7 @@ export interface Driver {
   map: GameMap;
   localId: string;
   names: ReadonlyMap<string, string>; // soldier id -> player name, for name tags
+  speaking?: ReadonlySet<string>; // voice chat: who is talking (online only; read, never copied)
   // Reads the button and returns what to draw, or null while there is nothing yet.
   frame(nowMs: number, button: OneButton): Frame | null;
   dispose(): void;

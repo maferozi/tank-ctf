@@ -13,3 +13,14 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      # Voice chat TURN relay (optional; see docs/VOICE.md). Secrets: set them in the
+      # Render dashboard, never in this file. Cloudflare TURN:
+      - key: CLOUDFLARE_TURN_KEY_ID
+        sync: false
+      - key: CLOUDFLARE_TURN_API_TOKEN
+        sync: false
+      # Or a self-hosted TURN (coturn with use-auth-secret), used when Cloudflare isn't set:
+      - key: TURN_URLS
+        sync: false
+      - key: TURN_SECRET
+        sync: false

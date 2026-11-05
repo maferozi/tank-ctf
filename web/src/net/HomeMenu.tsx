@@ -4,6 +4,7 @@ import { normalizeRoomCode, roundMaps, type MatchRounds } from "@tank/shared";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { Icon } from "./Icon";
 import { Logo } from "./Logo";
 import { MapPicker } from "./MapPicker";
 import { PlayerFields, usePlayerSetup } from "./PlayerSetup";
@@ -49,15 +50,16 @@ export function HomeMenu() {
     <main className="home">
       <header className="hero">
         <Logo />
-        <p className="tagline">One button. Tap to shoot, hold to walk. Steal their flag and bring it home.</p>
+        <p className="tagline">One button. Steal their flag, bring it home.</p>
       </header>
       <div className="home-grid">
-        <section className="panel">
+        <section className="panel create">
           <h2>New room</h2>
           <PlayerFields setup={setup} />
           <MatchPicker rounds={rounds} onChange={setRounds} />
           <MapPicker maps={maps} onChange={setMaps} />
           <button type="button" className="button big" disabled={busy} onClick={create}>
+            {!busy && <Icon name="play" />}
             {busy ? "Creating…" : "Create room"}
           </button>
         </section>
@@ -79,13 +81,16 @@ export function HomeMenu() {
             </form>
             {error && <p className="error">{error}</p>}
           </section>
-          <section className="panel">
-            <h2>Warm up</h2>
-            <p className="hint">Learn the one button alone, on any map.</p>
-            <Link href="/play" className="button secondary">
-              Practice solo
-            </Link>
-          </section>
+          <Link href="/play" className="panel practice-tile">
+            <span className="practice-icon" aria-hidden>
+              <Icon name="target" />
+            </span>
+            <span className="practice-text">
+              <span className="practice-title">Practice solo</span>
+              <span className="hint">Learn the button on practice targets.</span>
+            </span>
+            <Icon name="play" className="practice-go" />
+          </Link>
           <HowTo />
         </div>
       </div>
@@ -104,7 +109,7 @@ function HowTo() {
         <dt>Hold</dt>
         <dd>Walk where you face</dd>
         <dt>Tap fast</dt>
-        <dd>Fire in a straight line</dd>
+        <dd>Spray shots in a fan</dd>
       </dl>
     </section>
   );

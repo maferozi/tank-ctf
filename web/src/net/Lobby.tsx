@@ -1,6 +1,8 @@
 "use client";
 
 import { canStart, type Roster, type Team } from "@tank/shared";
+import { Icon } from "./Icon";
+import { MicChip, useVoice } from "./MicChip";
 import { RoundMaps } from "./MapPicker";
 import { RoomCode } from "./RoomChip";
 import type { Session } from "./session";
@@ -16,16 +18,23 @@ export function Lobby({ session, roster, code, onLeave }: { session: Session; ro
   const myTeam = roster.players.find((p) => p.id === me)?.team;
   const host = roster.players.find((p) => p.id === roster.hostId);
   const ready = canStart(roster);
+  const voice = useVoice(session.voice);
 
   return (
     <main className="home lobby">
+      <div className="lobby-mic">
+        <MicChip voice={voice} />
+      </div>
       <RoomCode code={code} />
       <section className="panel match-info">
-        <h2>{roster.rounds > 1 ? `${roster.rounds}-round tournament` : "Single match"}</h2>
+        <span className="eyebrow">{roster.rounds > 1 ? `${roster.rounds}-round tournament` : "Single match"}</span>
         <RoundMaps maps={roster.maps} />
       </section>
 
       <div className="lobby-teams">
+        <span className="versus" aria-hidden>
+          VS
+        </span>
         {(["red", "blue"] as const).map((team) => {
           const players = roster.players.filter((p) => p.team === team);
           return (
@@ -35,14 +44,20 @@ export function Lobby({ session, roster, code, onLeave }: { session: Session; ro
               </h2>
               <ul>
                 {players.map((p) => (
-                  <li key={p.id} className={p.id === me ? "me" : undefined}>
+                  <li
+                    key={p.id}
+                    className={[p.id === me && "me", voice.speaking.has(p.id) && "speaking"].filter(Boolean).join(" ") || undefined}
+                  >
                     <span className="lobby-name">
+                      <span className="avatar" aria-hidden>
+                        {p.name.trim().charAt(0).toUpperCase() || "?"}
+                      </span>
                       {p.id === roster.hostId && (
                         <span className="host-star" title="Host">
                           ★
                         </span>
                       )}
-                      {p.name}
+                      <span className="lobby-player">{p.name}</span>
                       {p.id === me && <span className="you">you</span>}
                       {p.away && <span className="away">away</span>}
                     </span>
@@ -68,10 +83,14 @@ export function Lobby({ session, roster, code, onLeave }: { session: Session; ro
       <div className="lobby-actions">
         {isHost ? (
           <button type="button" className="button big" disabled={!ready} onClick={() => session.start()}>
+            {ready && <Icon name="play" />}
             {ready ? "Start match" : "Needs a player on each team"}
           </button>
         ) : (
-          <p className="hint">Waiting for {host?.name ?? "the host"} to start the match…</p>
+          <p className="hint waiting">
+            <span className="spinner small" aria-hidden />
+            Waiting for {host?.name ?? "the host"} to start…
+          </p>
         )}
         <button type="button" className="quiet-link link-button" onClick={onLeave}>
           Leave room

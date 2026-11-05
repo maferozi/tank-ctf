@@ -8,6 +8,7 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "smoke": "tsx src/smoke.ts",
+    "test": "tsx --test src/*.test.ts",
     "loadtest": "tsx src/loadtest.ts"
   },
   "dependencies": {

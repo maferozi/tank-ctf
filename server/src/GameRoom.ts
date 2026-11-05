@@ -2,6 +2,12 @@ import { Room, matchMaker, type Client } from "colyseus";
 import {
   DEFAULT_HOLD_MS,
   InputQueue,
+  RateLimiter,
+  VOICE_BURST,
+  VOICE_CONFIG_BURST,
+  VOICE_CONFIG_PER_SECOND,
+  VOICE_PER_SECOND,
+  KEYFRAME_EVERY_SNAPSHOTS,
   MAX_FRAMES_PER_MESSAGE,
   MAX_PLAYERS,
   MSG,
@@ -10,12 +16,16 @@ import {
   TICK_MS,
   addTank,
   canStart,
+  canVoice,
   cleanName,
+  cloneDeep,
   createMatchState,
+  diffState,
   getMap,
   isMatchRounds,
   isTeam,
   makeRoomCode,
+  parseVoiceMessage,
   removeTank,
   roundMaps,
   step,
@@ -29,11 +39,14 @@ import {
   type RoomMetadata,
   type RoomPhase,
   type Roster,
-  type Snapshot,
+  type SnapshotMessage,
+  type SnapshotState,
   type TankInput,
   type Team,
   type TeamMessage,
+  type VoiceMessage,
 } from "@tank/shared";
+import { voiceConfig } from "./ice";
 
 // Clients send about 60 input messages a second (more on 120 Hz screens); anything far
 // beyond that is abuse.
@@ -60,6 +73,14 @@ export class GameRoom extends Room {
   private queues = new Map<string, InputQueue>(); // per player: button samples, one per tick
   private players = new Map<string, Player>(); // in join order
   private pendingEvents: GameEvent[] = [];
+  // Snapshots go out as deltas against the previous one; `lastSent` is a copy of it.
+  // Players in `needKeyframe` get the full state next (they just joined, came back, or
+  // asked because a delta didn't fit).
+  private lastSent: SnapshotState | null = null;
+  private snapshotsSinceKeyframe = 0;
+  private needKeyframe = new Set<string>();
+  private voiceLimits = new Map<string, RateLimiter>(); // per player: MSG.voice rate
+  private configLimits = new Map<string, RateLimiter>(); // per player: MSG.voiceConfig requests
   private accMs = 0;
   private stats = { ticks: 0, totalMs: 0, maxMs: 0, catchUps: 0, since: performance.now() };
 
@@ -72,10 +93,11 @@ export class GameRoom extends Room {
 
     this.onMessage(MSG.input, (client: Client, message: InputMessage) => {
       const queue = this.queues.get(client.sessionId);
-      if (!queue || !Array.isArray(message)) return;
+      if (!queue || !Array.isArray(message)) return; // InputQueue.push skips malformed frames
       queue.push(message.slice(0, MAX_FRAMES_PER_MESSAGE));
     });
     this.onMessage(MSG.ready, (client: Client) => client.send(MSG.roster, this.roster()));
+    this.onMessage(MSG.keyframe, (client: Client) => this.needKeyframe.add(client.sessionId));
     this.onMessage(MSG.team, (client: Client, message: TeamMessage) => {
       this.setTeam(client.sessionId, message?.team);
     });
@@ -86,6 +108,8 @@ export class GameRoom extends Room {
     this.onMessage(MSG.start, (client: Client) => {
       if (client.sessionId === this.hostId) this.startMatch();
     });
+    this.onMessage(MSG.voice, (client: Client, message: unknown) => this.relayVoice(client, message));
+    this.onMessage(MSG.voiceConfig, (client: Client) => this.requestVoiceConfig(client));
 
     this.setSimulationInterval((deltaMs) => this.update(deltaMs), TICK_MS);
     this.publishRoster();
@@ -96,9 +120,11 @@ export class GameRoom extends Room {
     const player: Player = { id: client.sessionId, name: cleanName(options.name), team, away: false };
     this.players.set(client.sessionId, player);
     this.hostId ??= client.sessionId;
+    this.needKeyframe.add(client.sessionId);
     // Joining mid-match: straight onto the picked team.
     if (this.phase === "playing") this.addSoldier(player);
     this.sendRoster();
+    this.sendVoiceConfig(client);
     console.log(`${player.name} (${team}) joined ${this.roomId} ${this.phase === "playing" ? "mid-match" : "lobby"}, ${this.players.size} player(s)`);
   }
 
@@ -118,6 +144,7 @@ export class GameRoom extends Room {
     const player = this.players.get(client.sessionId);
     if (!player) return;
     player.away = false;
+    this.needKeyframe.add(client.sessionId);
     // A reloaded page numbers its button samples from 1 again.
     if (this.queues.has(client.sessionId)) this.queues.set(client.sessionId, new InputQueue());
     this.sendRoster();
@@ -129,6 +156,9 @@ export class GameRoom extends Room {
     const player = this.players.get(client.sessionId);
     this.players.delete(client.sessionId);
     this.queues.delete(client.sessionId);
+    this.needKeyframe.delete(client.sessionId);
+    this.voiceLimits.delete(client.sessionId);
+    this.configLimits.delete(client.sessionId);
     removeTank(this.sim, client.sessionId);
     if (this.hostId === client.sessionId) this.hostId = this.players.keys().next().value ?? null;
     this.sendRoster();
@@ -145,9 +175,12 @@ export class GameRoom extends Room {
 
   private startMatch() {
     if (this.phase !== "lobby" || !canStart(this.roster())) return;
-    this.sim = createMatchState(this.rounds, this.maps);
+    // A fresh seed per match, picked here outside the sim, so power-box timings and kinds
+    // differ every game. It reaches the clients in the snapshots.
+    this.sim = createMatchState(this.rounds, this.maps, (Math.random() * 0x7fffffff) | 0);
     this.queues.clear();
     this.pendingEvents = [];
+    this.lastSent = null; // everyone starts with a keyframe
     this.accMs = 0;
     for (const player of this.players.values()) this.addSoldier(player);
     this.phase = "playing";
@@ -163,6 +196,7 @@ export class GameRoom extends Room {
   private endMatch() {
     this.phase = "lobby";
     this.queues.clear();
+    this.lastSent = null;
     this.sendRoster();
     console.log(`${this.roomId}: match over, back to the lobby`);
   }
@@ -211,10 +245,7 @@ export class GameRoom extends Room {
     this.pendingEvents.push(...this.sim.events);
 
     if (this.sim.tick % SNAPSHOT_EVERY_TICKS === 0) {
-      const { events: _lastStepEvents, ...state } = this.sim;
-      const acks = Object.fromEntries([...this.queues].map(([id, queue]) => [id, queue.ack]));
-      const snapshot: Snapshot = { state, events: this.pendingEvents, acks };
-      this.broadcast(MSG.snapshot, snapshot);
+      this.sendSnapshot();
       this.pendingEvents = [];
     }
     if (TICK_STATS) {
@@ -223,6 +254,70 @@ export class GameRoom extends Room {
       this.stats.totalMs += ms;
       this.stats.maxMs = Math.max(this.stats.maxMs, ms);
     }
+  }
+
+  // A keyframe for everyone every KEYFRAME_EVERY_SNAPSHOTS and when the map changes;
+  // otherwise one delta for everyone in sync, and keyframes for those who need one.
+  private sendSnapshot() {
+    const { events: _lastStepEvents, ...live } = this.sim;
+    const state = cloneDeep(live);
+    const acks = Object.fromEntries([...this.queues].map(([id, queue]) => [id, queue.ack]));
+    const events = this.pendingEvents;
+    const base = this.lastSent;
+    const keyframeDue = ++this.snapshotsSinceKeyframe >= KEYFRAME_EVERY_SNAPSHOTS;
+    // diffState throws if the state's top-level fields changed (a new version of the
+    // rules); a keyframe covers that too.
+    let delta: SnapshotMessage | null = null;
+    if (base && !keyframeDue && base.mapId === state.mapId) {
+      try {
+        delta = { base: base.tick, delta: diffState(base, state), events, acks };
+      } catch {
+        delta = null;
+      }
+    }
+    const full: SnapshotMessage = { full: state, events, acks };
+    if (!delta) {
+      this.broadcast(MSG.snapshot, full);
+      this.snapshotsSinceKeyframe = 0;
+    } else {
+      const keyed = [...this.needKeyframe].flatMap((id) => this.clients.getById(id) ?? []);
+      this.broadcast(MSG.snapshot, delta, { except: keyed });
+      for (const client of keyed) client.send(MSG.snapshot, full);
+    }
+    this.needKeyframe.clear();
+    this.lastSent = state;
+  }
+
+  // Voice chat signaling: passed on only between two players who may hear each other
+  // right now (lobby: anyone in the room; match: same team). The sender is stamped here,
+  // never taken from the message. Too big, malformed or too frequent messages are dropped.
+  // Audio itself never comes through the server.
+  private relayVoice(client: Client, raw: unknown) {
+    const from = client.sessionId;
+    if (!this.players.has(from)) return;
+    let limit = this.voiceLimits.get(from);
+    if (!limit) this.voiceLimits.set(from, (limit = new RateLimiter(VOICE_BURST, VOICE_PER_SECOND)));
+    if (!limit.take(performance.now())) return;
+    const message = parseVoiceMessage(raw);
+    if (!message || !canVoice({ phase: this.phase, players: [...this.players.values()] }, from, message.to)) return;
+    const target = this.clients.getById(message.to);
+    if (!target) return;
+    const out: VoiceMessage = { to: message.to, from, kind: message.kind, data: message.data };
+    target.send(MSG.voice, out);
+  }
+
+  // Clients ask for the ICE config when theirs is about to expire or after a reconnect;
+  // more often than that is cut.
+  private requestVoiceConfig(client: Client) {
+    let limit = this.configLimits.get(client.sessionId);
+    if (!limit) this.configLimits.set(client.sessionId, (limit = new RateLimiter(VOICE_CONFIG_BURST, VOICE_CONFIG_PER_SECOND)));
+    if (limit.take(performance.now())) this.sendVoiceConfig(client);
+  }
+
+  private sendVoiceConfig(client: Client) {
+    void voiceConfig(client.sessionId).then((config) => {
+      if (this.clients.getById(client.sessionId)) client.send(MSG.voiceConfig, config);
+    });
   }
 
   private roster(): Roster {
