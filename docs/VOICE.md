@@ -24,7 +24,10 @@ Open-mic voice chat between players, built into the room. Added 5 Nov 2026.
   - stamps `from` itself, so nobody can pretend to be someone else;
   - drops messages over 16 KB (`MAX_VOICE_MESSAGE_BYTES`) and anything malformed;
   - rate-limits each player (a burst of 300, enough to connect to 7 players at once with all their
-    ICE candidates, then 40 a second; ICE config requests: 5, then one per 10 s);
+    ICE candidates, then 40 a second; ICE config requests: 5, then one per 10 s). Clients pace
+    their own signaling to 60 messages a second, offers, answers and byes ahead of ICE
+    candidates: Colyseus cuts any client sending over 240 messages a second (game input
+    included, `maxMessagesPerSecond`), and an answer stuck behind candidates would be late;
   - never sees or touches audio.
 - **The group rule is one pure function** (`voiceGroup`, `voicePeers`, `canVoice` in
   `shared/src/voice.ts`), used by the server to relay and by the client to decide whom to

@@ -218,10 +218,13 @@ assert.equal(inbox(xan).length, 1, "match: blue reaches blue");
 assert.equal(inbox(xan)[0]!.from, wes.sessionId);
 
 // Rate limit: a flood is cut to the burst allowance.
-for (let i = 0; i < VOICE_BURST + 200; i++) say(wes, xan);
+// (Sent over two seconds: Colyseus itself cuts a client sending over 240 messages a second.)
+for (let i = 0; i < 200; i++) say(wes, xan);
+await sleep(1100);
+for (let i = 0; i < 200; i++) say(wes, xan);
 await sleep(500);
 const flood = inbox(xan).length - 1;
-assert.ok(flood >= VOICE_BURST - 10 && flood <= VOICE_BURST + 40, `a flood of ${VOICE_BURST + 200} is cut to about the burst, got ${flood}`);
+assert.ok(flood >= VOICE_BURST && flood <= VOICE_BURST + 80, `a flood of 400 is cut to about the burst, got ${flood}`);
 // Config requests are rate-limited too.
 const configsBefore = configs.length;
 for (let i = 0; i < 30; i++) wes.send(MSG.voiceConfig);

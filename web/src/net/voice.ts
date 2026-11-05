@@ -76,6 +76,10 @@ const FRESH_MIN_MS = 3000;
 const DISCONNECTED_RESTART_MS = 4000;
 const MAX_ICE_RESTARTS = 2; // then the impolite side starts a fresh connection
 const STATS_MS = 2000;
+// Outgoing signaling pace (see send()); well inside the server's VOICE_BURST/VOICE_PER_SECOND.
+const SEND_BURST = 60;
+const SEND_PER_SECOND = 60;
+const MAX_QUEUED_CANDIDATES = 400;
 
 interface Meter {
   source: MediaStreamAudioSourceNode;
@@ -170,6 +174,11 @@ class Voice implements VoiceChat {
   private statsTimer: ReturnType<typeof setInterval> | null = null;
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  private urgentQueue: VoiceMessage[] = []; // offers, answers, byes waiting to be sent
+  private candidateQueue: VoiceMessage[] = []; // ICE candidates waiting to be sent
+  private sendTokens = SEND_BURST;
+  private sendRefilledAt = 0;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private hintTimer: ReturnType<typeof setTimeout> | null = null;
   private gestureArmed = false;
   private disposed = false;
@@ -482,7 +491,7 @@ class Voice implements VoiceChat {
   private fail(reason: string, err: unknown): void {
     if (process.env.NODE_ENV !== "production") console.warn(`voice unavailable: ${reason}`, err);
     for (const peer of [...this.peersById.values()]) {
-      this.send(peer, "bye", {});
+      this.send(peer, "bye", {}, true);
       this.closePeer(peer);
     }
     this.unavailable = reason;
@@ -608,9 +617,45 @@ class Voice implements VoiceChat {
     delete this.stats[peer.id];
   }
 
-  private send(peer: Peer, kind: VoiceKind, extra: Omit<VoiceData, "epoch">): void {
+  // Signaling is paced (SEND_PER_SECOND): connecting to a full lobby at once makes a few
+  // hundred messages, and the server cuts a player who sends more than 240 messages a second
+  // (game input included). Offers, answers and byes go before ICE candidates, so an answer
+  // never waits behind a pile of candidates (or gets dropped by the server's own limit).
+  // `now`: hanging up on leave, sent straight away.
+  private send(peer: Peer, kind: VoiceKind, extra: Omit<VoiceData, "epoch">, now = false): void {
     if (this.disposed && kind !== "bye") return;
     const message: VoiceMessage = { to: peer.id, from: this.me, kind, data: { epoch: peer.epoch ?? 0, ...extra } };
+    if (now) {
+      this.transmit(message);
+      return;
+    }
+    if (kind === "ice") {
+      if (this.candidateQueue.length >= MAX_QUEUED_CANDIDATES) this.candidateQueue.shift();
+      this.candidateQueue.push(message);
+    } else {
+      this.urgentQueue.push(message);
+    }
+    this.flush();
+  }
+
+  private flush = (): void => {
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    const now = performance.now();
+    this.sendTokens = Math.min(SEND_BURST, this.sendTokens + ((now - this.sendRefilledAt) / 1000) * SEND_PER_SECOND);
+    this.sendRefilledAt = now;
+    while (this.sendTokens >= 1) {
+      const next = this.urgentQueue.shift() ?? this.candidateQueue.shift();
+      if (!next) return;
+      this.sendTokens -= 1;
+      this.transmit(next);
+    }
+    if (this.urgentQueue.length + this.candidateQueue.length > 0 && !this.disposed) {
+      this.flushTimer = setTimeout(this.flush, Math.ceil(1000 / SEND_PER_SECOND));
+    }
+  };
+
+  private transmit(message: VoiceMessage): void {
     try {
       this.room.send(MSG.voice, message);
     } catch {
@@ -843,7 +888,7 @@ class Voice implements VoiceChat {
       return;
     }
     for (const peer of [...this.peersById.values()]) {
-      this.send(peer, "bye", {});
+      this.send(peer, "bye", {}, true);
       this.closePeer(peer);
     }
     if (this.micStream) this.stopMic("");
@@ -860,7 +905,7 @@ class Voice implements VoiceChat {
   dispose(): void {
     if (this.disposed) return;
     for (const peer of [...this.peersById.values()]) {
-      this.send(peer, "bye", {});
+      this.send(peer, "bye", {}, true);
       this.closePeer(peer);
     }
     this.disposed = true;
@@ -871,6 +916,10 @@ class Voice implements VoiceChat {
     for (const t of this.timers) clearTimeout(t);
     this.timers.clear();
     this.refreshTimer = this.hintTimer = null;
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    this.urgentQueue = [];
+    this.candidateQueue = [];
     for (const audio of this.audioById.values()) {
       audio.pause();
       audio.srcObject = null;
