@@ -5,6 +5,7 @@ import {
   isPolite,
   tuneOpusSdp,
   voicePeers,
+  canHear,
   type Roster,
   type VoiceConfig,
   type VoiceData,
@@ -34,10 +35,12 @@ export interface VoiceChat {
   readonly unavailable: string; // why voice chat can't run in this browser ("" if it can)
   readonly needsTap: boolean; // the browser blocked playback: a tap is needed to hear others
   readonly showHint: boolean; // "use headphones", once, after the first tap
+  readonly sharing: boolean; // your voice also goes to the other team in a match (your choice)
   readonly version: number; // changes whenever anything above does
   subscribe(listener: () => void): () => void;
   start(): void; // from a user gesture: turns the mic on and unlocks audio playback
   setMuted(muted: boolean): void;
+  setSharing(on: boolean): void; // let the other team hear you in the match (off by default)
   retryMic(): void; // after "Mic blocked": ask again (e.g. once it's allowed in the browser)
   dismissHint(): void;
   hintShown(): void; // the hint is on screen: remember it, hide it after a while
@@ -267,7 +270,7 @@ class Voice implements VoiceChat {
       };
       this.micStream = stream;
       this.micTrack = track;
-      for (const peer of this.peersById.values()) if (peer.sender) void peer.sender.replaceTrack(track).catch(() => {});
+      for (const peer of this.peersById.values()) this.updateSender(peer);
       if (this.ctx) this.localMeter = this.meter(stream);
       this.setMic("on");
     } catch (err) {
@@ -448,8 +451,10 @@ class Voice implements VoiceChat {
   // ---- Who to connect to ----
 
   setRoster(roster: Roster): void {
+    const wasSharing = this.sharing;
     this.roster = roster;
     this.reconcile();
+    if (this.sharing !== wasSharing) this.notify();
   }
 
   reconnected(): void {
@@ -472,6 +477,8 @@ class Voice implements VoiceChat {
     if (this.disposed || this.unavailable || !this.config || !this.roster) return;
     this.wanted = new Set(voicePeers(this.roster, this.me));
     let changed = false;
+    // Someone started or stopped sharing: send or stop sending the mic on existing lines.
+    for (const peer of this.peersById.values()) if (this.wanted.has(peer.id)) this.updateSender(peer);
     for (const [id, peer] of this.peersById) {
       if (this.wanted.has(id)) continue;
       this.send(peer, "bye", {});
@@ -547,7 +554,7 @@ class Voice implements VoiceChat {
     if (!peer.polite) {
       // The impolite side starts: adding the audio line fires negotiationneeded -> offer.
       try {
-        const transceiver = pc.addTransceiver(this.micTrack ?? "audio", { direction: "sendrecv" });
+        const transceiver = pc.addTransceiver(this.trackFor(id) ?? "audio", { direction: "sendrecv" });
         peer.sender = transceiver.sender;
       } catch (err) {
         this.closePeer(peer);
@@ -758,7 +765,32 @@ class Voice implements VoiceChat {
     if (!transceiver) return;
     transceiver.direction = "sendrecv";
     peer.sender = transceiver.sender;
-    if (this.micTrack) void transceiver.sender.replaceTrack(this.micTrack).catch(() => {});
+    this.updateSender(peer);
+  }
+
+  // Your mic goes to a player only if they may hear you (your team, or an enemy while you
+  // share your voice). Other connections exist only so you can hear them: they get silence.
+  private trackFor(id: string): MediaStreamTrack | null {
+    if (!this.micTrack || !this.roster) return null;
+    return canHear(this.roster, id, this.me) ? this.micTrack : null;
+  }
+
+  private updateSender(peer: Peer): void {
+    if (!peer.sender || peer.closed) return;
+    const track = this.trackFor(peer.id);
+    if (peer.sender.track !== track) void peer.sender.replaceTrack(track).catch(() => {});
+  }
+
+  get sharing(): boolean {
+    return this.roster?.players.find((p) => p.id === this.me)?.shareVoice === true;
+  }
+
+  setSharing(on: boolean): void {
+    try {
+      this.room.send(MSG.shareVoice, { on });
+    } catch {
+      // Not connected right now: the chip still shows the server's state.
+    }
   }
 
   private onTrack(peer: Peer, track: MediaStreamTrack): void {

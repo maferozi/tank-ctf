@@ -78,9 +78,10 @@ export function tickFlags(state: GameState): void {
       }
       flag.x = carrier.x;
       flag.y = carrier.y;
-      // Score at your own flag's stand (it doesn't matter whether your flag is there).
+      // Score at your own flag's stand, and only while your own flag is home on it: if the
+      // other team holds yours, get it back first (players' call, 9 Nov 2026).
       const own = state.flags.find((f) => f.team === carrier.team);
-      if (own && (carrier.x - own.homeX) ** 2 + (carrier.y - own.homeY) ** 2 <= BASE_RADIUS * BASE_RADIUS) {
+      if (own && own.atHome && (carrier.x - own.homeX) ** 2 + (carrier.y - own.homeY) ** 2 <= BASE_RADIUS * BASE_RADIUS) {
         winRound(state, carrier.team);
         state.events.push({ type: "capture", team: carrier.team, tankId: carrier.id, x: carrier.x, y: carrier.y });
         return;

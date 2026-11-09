@@ -28,7 +28,7 @@ import {
   type Tank,
   type Team,
 } from "@tank/shared";
-import { INK, TEAM, blit, blitAt, font, hash, rrect } from "./art/common";
+import { INK, TEAM, blit, blitAt, font, hash, rrect, type Sprite } from "./art/common";
 import {
   POWER_COLOR,
   SHIELD_R,
@@ -37,13 +37,17 @@ import {
   bootSprite,
   bulletBallSprite,
   bulletStreakSprite,
+  bedShadow,
+  crateShadow,
   crateSprite,
+  deskShadow,
   deskSprite,
   fallenSprite,
   flashSprite,
   glowSprite,
   labelSprite,
   nameTagSprite,
+  powerBoxShadow,
   powerBoxSprite,
   shadowSprite,
   shieldSprite,
@@ -51,6 +55,7 @@ import {
   sparkleSprite,
   splatSprite,
   youRingSprite,
+  type BlockShadow,
 } from "./art/sprites";
 import { drawMapLayer } from "./mapArt";
 
@@ -113,7 +118,7 @@ export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
   for (const c of prev.crates) prevCrates.set(c.id, c);
   for (const c of curr.crates) {
     const p = prevCrates.get(c.id);
-    drawCrate(ctx, c, p ? lerp(p.x, c.x, alpha) : c.x, p ? lerp(p.y, c.y, alpha) : c.y);
+    drawCrate(ctx, c, p ? lerp(p.x, c.x, alpha) : c.x, p ? lerp(p.y, c.y, alpha) : c.y, p ? lerpAngle(p.angle, c.angle, alpha) : c.angle);
   }
 
   prevBoxes.clear();
@@ -125,7 +130,14 @@ export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
     const p = prevBoxes.get(box.id);
     // No lerp on the tick it appears, so a box that comes home doesn't slide back.
     const smooth = p && p.respawnMs <= 0;
-    drawPowerBox(ctx, smooth ? lerp(p.x, box.x, alpha) : box.x, smooth ? lerp(p.y, box.y, alpha) : box.y, nowMs, since);
+    drawPowerBox(
+      ctx,
+      smooth ? lerp(p.x, box.x, alpha) : box.x,
+      smooth ? lerp(p.y, box.y, alpha) : box.y,
+      nowMs,
+      since,
+      smooth ? lerpAngle(p.angle, box.angle, alpha) : box.angle,
+    );
   }
 
   prevTanks.clear();
@@ -203,9 +215,9 @@ export function render(ctx: CanvasRenderingContext2D, r: RenderInput): void {
 export function drawMapPreview(ctx: CanvasRenderingContext2D, map: GameMap): void {
   drawMapLayer(ctx, map, 0.6);
   for (const flag of createFlags(map)) drawFlagShape(ctx, flag.team, flag.x, flag.y, FLAG_RADIUS * 1.6, 0);
-  for (const c of map.crates) blitAt(ctx, crateSprite(), c.x, c.y);
-  for (const d of map.desks) blitAt(ctx, deskSprite(), d.x, d.y);
-  for (const b of map.beds) blitAt(ctx, bedSprite(), b.x, b.y);
+  for (const c of map.crates) drawBlock(ctx, crateSprite(), crateShadow(), c.x, c.y, 0);
+  for (const d of map.desks) drawBlock(ctx, deskSprite(), deskShadow(), d.x, d.y, 0);
+  for (const b of map.beds) drawBlock(ctx, bedSprite(), bedShadow(), b.x, b.y, 0);
   for (const p of map.powerBoxes) drawPowerBox(ctx, p.x, p.y, 0, -Infinity);
 }
 
@@ -277,7 +289,7 @@ function drawSoldierAt(
   const team = TEAM[t.team];
   blitAt(ctx, shadowSprite(), x + 2, y + 3.5);
   if (isLocal) {
-    ctx.globalAlpha = 0.75 + 0.25 * Math.sin(nowMs / 260);
+    ctx.globalAlpha = 0.7;
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(nowMs / 1400);
@@ -335,6 +347,12 @@ function drawSoldierAt(
   ctx.restore();
 
   if (t.shieldMs > 0) drawShield(ctx, t, x, y, nowMs);
+  else if (t.spawnShieldMs > 0) {
+    // Spawn protection: a faint bubble that blinks, so attackers see shots won't land.
+    ctx.globalAlpha = 0.35 + 0.25 * Math.sin(nowMs / 70);
+    blitAt(ctx, shieldSprite(), x, y);
+    ctx.globalAlpha = 1;
+  }
   if (carrying) drawCarriedFlag(ctx, carrying, x - cos * 10, y - sin * 10, nowMs);
 
   // Just respawned: a ring that closes in on them, and a quick flash.
@@ -557,14 +575,35 @@ function drawReturnRing(ctx: CanvasRenderingContext2D, team: Team, x: number, y:
 
 // --- Furniture and power boxes -----------------------------------------------------------
 
-function drawCrate(ctx: CanvasRenderingContext2D, c: Crate, x: number, y: number): void {
-  blitAt(ctx, c.bed ? bedSprite() : c.desk ? deskSprite() : crateSprite(), x, y);
+// Crates, desks and beds turn when pushed off-centre (Crate.angle); the shadow turns with
+// them but stays offset down-right.
+function drawCrate(ctx: CanvasRenderingContext2D, c: Crate, x: number, y: number, angle: number): void {
+  if (c.bed) drawBlock(ctx, bedSprite(), bedShadow(), x, y, angle);
+  else if (c.desk) drawBlock(ctx, deskSprite(), deskShadow(), x, y, angle);
+  else drawBlock(ctx, crateSprite(), crateShadow(), x, y, angle);
+}
+
+function drawBlock(ctx: CanvasRenderingContext2D, sprite: Sprite, shadow: BlockShadow, x: number, y: number, angle: number, scale = 1): void {
+  blitTurned(ctx, shadow.sprite, x + shadow.dx * scale, y + shadow.dy * scale, angle, scale);
+  blitTurned(ctx, sprite, x, y, angle, scale);
+}
+
+function blitTurned(ctx: CanvasRenderingContext2D, s: Sprite, x: number, y: number, angle: number, scale = 1): void {
+  if (angle === 0) {
+    blitAt(ctx, s, x, y, scale);
+    return;
+  }
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  blit(ctx, s, scale);
+  ctx.restore();
 }
 
 const POP_MS = 420;
 
 // The "?" box: a soft violet halo, a gentle bob, a twinkle, and a pop when it appears.
-function drawPowerBox(ctx: CanvasRenderingContext2D, x: number, y: number, nowMs: number, since: number): void {
+function drawPowerBox(ctx: CanvasRenderingContext2D, x: number, y: number, nowMs: number, since: number, angle = 0): void {
   const age = nowMs - since;
   const pop = age < POP_MS ? easeOutBack(age / POP_MS) : 1;
   const bob = Math.sin(nowMs / 320) * 1.5;
@@ -580,7 +619,9 @@ function drawPowerBox(ctx: CanvasRenderingContext2D, x: number, y: number, nowMs
     ctx.arc(x, y, 10 + p * 24, 0, Math.PI * 2);
     ctx.stroke();
   }
-  blitAt(ctx, powerBoxSprite(), x, y + bob * pop, pop);
+  const shadow = powerBoxShadow();
+  blitTurned(ctx, shadow.sprite, x + shadow.dx * pop, y + shadow.dy * pop, angle, pop);
+  blitTurned(ctx, powerBoxSprite(), x, y + bob * pop, angle, pop);
   const tw = (nowMs / 900) % 1;
   if (tw < 0.5) {
     const s = Math.sin(tw * 2 * Math.PI);

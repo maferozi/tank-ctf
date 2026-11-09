@@ -35,6 +35,7 @@ import {
   type JoinOptions,
   type MatchRounds,
   type MoveMessage,
+  type ShareVoiceMessage,
   type Player,
   type RoomMetadata,
   type RoomPhase,
@@ -108,6 +109,14 @@ export class GameRoom extends Room {
     this.onMessage(MSG.start, (client: Client) => {
       if (client.sessionId === this.hostId) this.startMatch();
     });
+    // Each player may let the other team hear them in the match (off by default). Every
+    // client sees it in the roster and adjusts voice; the relay rule follows it at once.
+    this.onMessage(MSG.shareVoice, (client: Client, message: ShareVoiceMessage) => {
+      const player = this.players.get(client.sessionId);
+      if (!player || typeof message?.on !== "boolean" || message.on === player.shareVoice) return;
+      player.shareVoice = message.on;
+      this.sendRoster();
+    });
     this.onMessage(MSG.voice, (client: Client, message: unknown) => this.relayVoice(client, message));
     this.onMessage(MSG.voiceConfig, (client: Client) => this.requestVoiceConfig(client));
 
@@ -117,7 +126,7 @@ export class GameRoom extends Room {
 
   onJoin(client: Client, options: Partial<JoinOptions> = {}) {
     const team = isTeam(options.team) ? options.team : "red";
-    const player: Player = { id: client.sessionId, name: cleanName(options.name), team, away: false };
+    const player: Player = { id: client.sessionId, name: cleanName(options.name), team, away: false, shareVoice: false };
     this.players.set(client.sessionId, player);
     this.hostId ??= client.sessionId;
     this.needKeyframe.add(client.sessionId);

@@ -9,6 +9,7 @@ import {
   VOICE_CONFIG_PER_SECOND,
   VOICE_MAX_BITRATE,
   VOICE_PER_SECOND,
+  canHear,
   canVoice,
   isPolite,
   parseVoiceMessage,
@@ -17,7 +18,7 @@ import {
   voicePeers,
 } from "./voice";
 
-const player = (id: string, team: "red" | "blue", away = false): Player => ({ id, name: id, team, away });
+const player = (id: string, team: "red" | "blue", away = false): Player => ({ id, name: id, team, away, shareVoice: false });
 const roster = (phase: Roster["phase"], players: Player[]) => ({ phase, players });
 const people = [player("a", "red"), player("b", "blue"), player("c", "blue"), player("d", "red")];
 
@@ -36,6 +37,19 @@ test("match: only your own team", () => {
   assert.deepEqual(voicePeers(r, "c"), ["b"]);
   assert.ok(!canVoice(r, "a", "b"), "red can't reach blue");
   assert.ok(canVoice(r, "b", "c"));
+});
+
+test("match: a player who shares their voice is heard by the other team, one way", () => {
+  const sharing = people.map((p) => (p.id === "a" ? { ...p, shareVoice: true } : p));
+  const r = roster("playing", sharing);
+  assert.ok(canHear(r, "b", "a"), "blue hears red's sharer");
+  assert.ok(!canHear(r, "a", "b"), "the sharer doesn't hear blue, who didn't share");
+  assert.ok(canVoice(r, "a", "b"), "so they need a connection");
+  assert.deepEqual(voicePeers(r, "a"), ["b", "c", "d"]);
+  assert.deepEqual(voicePeers(r, "d"), ["a"], "red's non-sharer: own team only");
+  const both = sharing.map((p) => (p.id === "b" ? { ...p, shareVoice: true } : p));
+  assert.ok(canHear(roster("playing", both), "a", "b"), "both share: they talk both ways");
+  assert.deepEqual(voicePeers(roster("playing", people), "a"), ["d"], "nobody shares: team only");
 });
 
 test("strangers, yourself and away players", () => {

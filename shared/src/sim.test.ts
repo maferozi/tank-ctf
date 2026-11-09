@@ -40,8 +40,8 @@ import {
 } from "./constants";
 import { boxHitsWall, DEFAULT_MAP, parseMap } from "./map";
 import { getMap } from "./maps";
-import { contact } from "./physics";
-import { addTank, createMatchState, createState, givePower, resetRound, step, type TankInput } from "./sim";
+import { blockHitsSolid, contact } from "./physics";
+import { addTank, cloneState, createMatchState, createState, givePower, resetRound, step, type TankInput } from "./sim";
 
 const config = { holdMs: 60 };
 const map = DEFAULT_MAP;
@@ -456,7 +456,7 @@ function crateAhead() {
   tank.x = 500;
   tank.y = 300;
   tank.angle = 0;
-  const crate = { id: 1, x: tank.x + TANK_RADIUS + CRATE_SIZE / 2, y: 300, pushMs: 0 };
+  const crate = { id: 1, x: tank.x + TANK_RADIUS + CRATE_SIZE / 2, y: 300, angle: 0, pushMs: 0 };
   state.crates.push(crate);
   tank.cooldownMs = 1e9; // walk in without firing: a shot would break the crate
   return { state, tank, crate };
@@ -502,7 +502,7 @@ function pushFor(bed: boolean): number {
   tank.y = 360;
   tank.angle = 0;
   const size = bed ? BED_SIZE : CRATE_SIZE;
-  const box = { id: 1, x: tank.x + TANK_RADIUS + size / 2, y: 360, pushMs: 0, bed };
+  const box = { id: 1, x: tank.x + TANK_RADIUS + size / 2, y: 360, angle: 0, pushMs: 0, bed };
   state.crates.push(box);
   tank.cooldownMs = 1e9; // walk in without firing: a shot would break a crate
   for (let i = 0; i < 75; i++) step(state, OPEN_ROOM, { t: hold }, config);
@@ -623,7 +623,7 @@ function powerBoxNearby() {
   tank.y = 300;
   tank.angle = 0;
   const x = tank.x + TANK_RADIUS + POWER_BOX_SIZE / 2 + 20;
-  const box = { id: 1, x, y: 300, homeX: x, homeY: 300, respawnMs: 0, pushMs: 0 };
+  const box = { id: 1, x, y: 300, homeX: x, homeY: 300, angle: 0, respawnMs: 0, pushMs: 0 };
   state.powerBoxes.push(box);
   return { state, tank, box };
 }
@@ -687,6 +687,7 @@ test("a pushed power box comes back at its home spot", () => {
   givePower(state, tank, "shield");
   for (let i = 0; i < 90; i++) step(state, map, { t: hold }, config);
   assert.ok(box.x > box.homeX + 10);
+  box.angle = 0.7; // as if it had been turned by a push
   tank.shieldMs = 0;
   for (let i = 0; i < 5 && box.respawnMs === 0; i++) step(state, map, { t: hold }, config);
   assert.ok(box.respawnMs > 0);
@@ -695,6 +696,7 @@ test("a pushed power box comes back at its home spot", () => {
   assert.equal(box.respawnMs, 0);
   assert.equal(box.x, box.homeX);
   assert.equal(box.y, box.homeY);
+  assert.equal(box.angle, 0, "it comes home square");
 });
 
 test("givePower replaces the current power", () => {
@@ -915,22 +917,94 @@ function pushSetup(angle: number, off: number, kind: "crate" | "desk" | "bed" = 
   tank.angle = angle;
   tank.cooldownMs = 1e9; // walk in without firing: a shot would break a crate
   const size = kind === "bed" ? BED_SIZE : kind === "desk" ? DESK_SIZE : CRATE_SIZE;
-  const box = { id: 1, x: tank.x + TANK_RADIUS + size / 2 + 2, y: 360 + off, pushMs: 0, bed: kind === "bed", desk: kind === "desk" };
+  const box = { id: 1, x: tank.x + TANK_RADIUS + size / 2 + 2, y: 360 + off, angle: 0, pushMs: 0, bed: kind === "bed", desk: kind === "desk" };
   state.crates.push(box);
   return { state, tank, box, size };
 }
 
-test("pushing a crate off-centre, near its corner, moves it straight forward", () => {
-  // Centre line 20 px off: the soldier's edge only overlaps the crate's face by 10 px.
-  const { state, tank, box } = pushSetup(0, CRATE_SIZE / 2 + 4);
+const deg = (rad: number) => (rad * 180) / Math.PI;
+const blockOverlap = (tank: { x: number; y: number }, box: { x: number; y: number; angle: number }, size: number) =>
+  contact({ pos: tank, shape: "circle", size: TANK_RADIUS, mass: 1 }, { pos: box, shape: "box", size: size / 2, mass: 1 })?.depth ?? 0;
+
+test("pushing the middle of a face moves the block straight, without turning it", () => {
+  for (const kind of ["crate", "desk", "bed"] as const) {
+    const { state, tank, box } = pushSetup(0, 0, kind);
+    const y0 = box.y;
+    const x0 = box.x;
+    for (let i = 0; i < 120; i++) step(state, OPEN_ROOM, { t: hold }, config);
+    assert.ok(box.x - x0 > 30, `${kind} should move forward, moved ${(box.x - x0).toFixed(1)}`);
+    assert.equal(box.angle, 0, `${kind} must not turn`);
+    assert.equal(box.y, y0, `${kind} must not drift sideways`);
+    assert.equal(tank.y, 360, "soldier stays on its line");
+  }
+});
+
+test("pushing a crate near its corner turns it while it moves, and the soldier slides off", () => {
+  // The soldier's centre line meets the crate's face 2 px from its corner.
+  const { state, tank, box } = pushSetup(0, -(CRATE_SIZE / 2 - 2));
   const x0 = box.x;
-  const y0 = box.y;
+  let reached = -1;
+  let atOneSecond = 0;
+  for (let i = 0; i < 180; i++) {
+    step(state, OPEN_ROOM, { t: hold }, config);
+    if (reached < 0 && box.x > x0) reached = i;
+    if (reached >= 0 && i - reached === 60) atOneSecond = box.angle;
+    assert.ok(blockOverlap(tank, box, CRATE_SIZE) < 1e-6, "soldier overlaps the crate");
+  }
+  // The crate is above the soldier's line, so it turns anticlockwise on screen.
+  assert.ok(deg(-atOneSecond) > 20 && deg(-atOneSecond) < 60, `turned ${deg(atOneSecond).toFixed(1)} degrees in a second`);
+  assert.ok(box.x - x0 > 20, `crate should also move forward, moved ${(box.x - x0).toFixed(1)}`);
+  assert.ok(deg(-box.angle) > 30 && deg(-box.angle) < 80, `ends turned ${deg(box.angle).toFixed(1)} degrees`);
+  assert.ok(tank.x > box.x, "the soldier slips off the corner and walks on past");
+});
+
+test("a bed turns less than a crate under the same push", () => {
+  const turned = (kind: "crate" | "bed") => {
+    const size = kind === "bed" ? BED_SIZE : CRATE_SIZE;
+    const { state, box } = pushSetup(0, size * 0.4, kind); // same spot: 80% of the way to the corner
+    for (let i = 0; i < 60; i++) step(state, OPEN_ROOM, { t: hold }, config);
+    assert.ok(box.angle > 0, `${kind} should turn clockwise`);
+    return box.angle;
+  };
+  const crate = turned("crate");
+  const bed = turned("bed");
+  assert.ok(bed < crate * 0.75, `bed ${deg(bed).toFixed(1)} vs crate ${deg(crate).toFixed(1)} degrees`);
+});
+
+test("blocks don't spin on their own: no push, no turn", () => {
+  const { state, tank, box } = pushSetup(0, CRATE_SIZE / 2 - 4);
+  for (let i = 0; i < 40; i++) step(state, OPEN_ROOM, { t: hold }, config);
+  assert.ok(box.angle !== 0);
+  tank.x = 100; // step away
+  const at = { x: box.x, y: box.y, angle: box.angle };
+  for (let i = 0; i < 60; i++) step(state, OPEN_ROOM, {}, config);
+  assert.deepEqual({ x: box.x, y: box.y, angle: box.angle }, at);
+});
+
+test("a slightly diagonal heading into the middle of a face grips it and pushes it straight on", () => {
+  const angle = 0.4; // ~23 degrees: under the PUSH_GRIP limit
+  assert.ok(Math.tan(angle) < PUSH_GRIP);
+  const { state, tank, box } = pushSetup(angle, 0);
+  for (let i = 0; i < 20; i++) step(state, OPEN_ROOM, { t: hold }, config); // reach it
+  const x0 = box.x;
   const ty = tank.y;
-  for (let i = 0; i < 120; i++) step(state, OPEN_ROOM, { t: hold }, config);
-  assert.ok(box.x - x0 > 50, `crate should move forward, moved ${(box.x - x0).toFixed(1)}`);
-  assert.ok(Math.abs(box.y - y0) < 1e-6, `crate drifted sideways ${(box.y - y0).toFixed(2)}`);
-  assert.ok(Math.abs(tank.y - ty) < 1e-6, "soldier must not slide round the corner");
-  assert.ok(tank.x < box.x, "soldier stays behind the crate");
+  for (let i = 0; i < 90; i++) step(state, OPEN_ROOM, { t: hold }, config);
+  assert.ok(box.x - x0 > 40, `crate should move along x, moved ${(box.x - x0).toFixed(1)}`);
+  // It meets the face a few px off its middle, so the crate turns only a hair.
+  assert.ok(Math.abs(deg(box.angle)) < 3, `crate turned ${deg(box.angle).toFixed(2)} degrees`);
+  assert.ok(Math.abs(tank.y - ty) < 3, `soldier grips the face instead of sliding along it, slid ${(tank.y - ty).toFixed(2)}`);
+});
+
+test("a steep heading slides along the face and turns the block as the push moves off-centre", () => {
+  const angle = 0.7; // ~40 degrees: over the PUSH_GRIP limit
+  assert.ok(Math.tan(angle) > PUSH_GRIP);
+  const { state, tank, box } = pushSetup(angle, 0);
+  for (let i = 0; i < 20; i++) step(state, OPEN_ROOM, { t: hold }, config); // reach it
+  const ty = tank.y;
+  for (let i = 0; i < 20; i++) step(state, OPEN_ROOM, { t: hold }, config);
+  assert.ok(tank.y - ty > 5, "soldier slides along the face");
+  // Sliding down the face, the push lands below the middle: the crate turns anticlockwise.
+  assert.ok(box.angle < -0.02, `the off-centre push turns the crate, ${deg(box.angle).toFixed(1)} degrees`);
 });
 
 test("a soldier who only clips the corner still glances off and walks past", () => {
@@ -938,32 +1012,6 @@ test("a soldier who only clips the corner still glances off and walks past", () 
   const { state, tank, box } = pushSetup(0, CRATE_SIZE / 2 + TANK_RADIUS - 2);
   for (let i = 0; i < 120; i++) step(state, OPEN_ROOM, { t: hold }, config);
   assert.ok(tank.x > box.x + 10, "a glancing soldier walks past the corner");
-});
-
-test("a slightly diagonal heading pushes along the main axis and the soldier grips the face", () => {
-  const angle = 0.4; // ~23 degrees: under the PUSH_GRIP limit
-  assert.ok(Math.tan(angle) < PUSH_GRIP);
-  const { state, tank, box } = pushSetup(angle, 0);
-  for (let i = 0; i < 20; i++) step(state, OPEN_ROOM, { t: hold }, config); // reach it
-  const x0 = box.x;
-  const y0 = box.y;
-  const ty = tank.y;
-  for (let i = 0; i < 90; i++) step(state, OPEN_ROOM, { t: hold }, config);
-  assert.ok(box.x - x0 > 40, `crate should move along x, moved ${(box.x - x0).toFixed(1)}`);
-  assert.ok(Math.abs(box.y - y0) < 1e-6, "crate moves along x only");
-  assert.ok(Math.abs(tank.y - ty) < 1e-6, "soldier grips the face instead of sliding along it");
-});
-
-test("a steep heading pushes along x but slides along the face", () => {
-  const angle = 0.7; // ~40 degrees: over the PUSH_GRIP limit, still mostly along x
-  assert.ok(Math.tan(angle) > PUSH_GRIP);
-  const { state, tank, box } = pushSetup(angle, 0);
-  for (let i = 0; i < 20; i++) step(state, OPEN_ROOM, { t: hold }, config); // reach it
-  const y0 = box.y;
-  const ty = tank.y;
-  for (let i = 0; i < 20; i++) step(state, OPEN_ROOM, { t: hold }, config);
-  assert.ok(tank.y - ty > 5, "soldier slides along the face");
-  assert.ok(Math.abs(box.y - y0) < 1e-6, "the crate is still pushed along x only");
 });
 
 test("a soldier beside a crate's corner, walking away from it, slips past instead of sticking", () => {
@@ -988,17 +1036,6 @@ test("beside an unpinned crate's corner, walking away does not drag the crate by
   const x0 = box.x;
   for (let i = 0; i < 120; i++) step(state, OPEN_ROOM, { t: hold }, config);
   assert.ok(box.x - x0 < 10, `crate dragged ${(box.x - x0).toFixed(1)} px by its corner`);
-});
-
-test("walking mostly along y pushes a crate along y", () => {
-  const { state, tank, box } = pushSetup(Math.PI / 2 - 0.2, 0);
-  box.x = tank.x + 10; // below the soldier, a bit to the right of its path
-  box.y = tank.y + TANK_RADIUS + CRATE_SIZE / 2 + 2;
-  const x0 = box.x;
-  const y0 = box.y;
-  for (let i = 0; i < 90; i++) step(state, OPEN_ROOM, { t: hold }, config);
-  assert.ok(box.y - y0 > 30, `crate should move down, moved ${(box.y - y0).toFixed(1)}`);
-  assert.ok(Math.abs(box.x - x0) < 1e-6, "crate moves along y only");
 });
 
 test("a desk is a heavy, sticky, one-tile block: slides at its weight's speed", () => {
@@ -1027,6 +1064,137 @@ test("a desk stops bullets and never breaks", () => {
   assert.equal(state.crates.length, 1);
   assert.equal(target.alive, true);
   assert.equal(state.bullets.length, 0);
+});
+
+test("a turned block pushed into a wall never goes into it and settles flat against it", () => {
+  let settled = 0;
+  for (const kind of ["crate", "bed"] as const) {
+    const size = kind === "bed" ? BED_SIZE : CRATE_SIZE;
+    for (let d = 0; d < 180; d += 7.5) {
+      for (const off of [0, 9]) {
+        const { state, tank, box } = pushSetup(0, 0, kind);
+        tank.x = 1080 - 80 - size;
+        tank.y = 360 + off;
+        box.x = tank.x + TANK_RADIUS + size * 0.75;
+        box.y = 360;
+        box.angle = (d * Math.PI) / 180 - Math.PI / 2;
+        assert.equal(blockHitsSolid(OPEN_ROOM, box.x, box.y, size / 2, box.angle), false);
+        for (let i = 0; i < 240; i++) {
+          step(state, OPEN_ROOM, { t: hold }, config);
+          assert.ok(!blockHitsSolid(OPEN_ROOM, box.x, box.y, size / 2, box.angle), `${kind} at ${d} degrees went into the wall`);
+          assert.ok(blockOverlap(tank, box, size) < 1e-6, `soldier overlaps the ${kind} (${d} degrees)`);
+        }
+        // Pushed square on into the wall (not glanced off), it ends up flat against it.
+        if (tank.x < box.x && Math.abs(box.x + size / 2 - 1080) < 1.5) {
+          const tilt = box.angle - Math.round(box.angle / (Math.PI / 2)) * (Math.PI / 2);
+          assert.ok(Math.abs(deg(tilt)) < 2, `${kind} from ${d} degrees still tilted ${deg(tilt).toFixed(1)} against the wall`);
+          settled++;
+        }
+      }
+    }
+  }
+  assert.ok(settled > 50, `only ${settled} of 96 pushes reached the wall`);
+});
+
+test("a turned block can't be turned into a wall, but can be pushed along it", () => {
+  // A crate flush against the right wall, pushed at its corner: it can't swing into the wall.
+  const { state, tank, box } = pushSetup(0, 0);
+  box.x = 1080 - CRATE_SIZE / 2;
+  box.y = 360;
+  tank.x = box.x - CRATE_SIZE / 2 - TANK_RADIUS;
+  tank.y = box.y - CRATE_SIZE / 2 + 3;
+  for (let i = 0; i < 90; i++) {
+    step(state, OPEN_ROOM, { t: hold }, config);
+    assert.ok(!blockHitsSolid(OPEN_ROOM, box.x, box.y, CRATE_SIZE / 2, box.angle));
+  }
+  assert.ok(Math.abs(box.angle) < 1e-9, `turned ${deg(box.angle).toFixed(2)} degrees into the wall`);
+});
+
+test("pushing a bed into the next bed pushes both; off-centre they turn, and never overlap", () => {
+  for (const off of [0, 30]) {
+    const { state, tank, box } = pushSetup(0, 0, "bed");
+    const next = { id: 2, x: box.x + BED_SIZE + 4, y: box.y + off, angle: 0, pushMs: 0, bed: true };
+    state.crates.push(next);
+    const x0 = next.x;
+    for (let i = 0; i < 240; i++) {
+      step(state, OPEN_ROOM, { t: hold }, config);
+      const c = contact(
+        { pos: box, shape: "box", size: BED_SIZE / 2, mass: 1 },
+        { pos: next, shape: "box", size: BED_SIZE / 2, mass: 1 },
+      );
+      assert.ok((c?.depth ?? 0) < 0.5, `beds overlap by ${c?.depth.toFixed(2)}`);
+      assert.ok(blockOverlap(tank, box, BED_SIZE) < 0.01, `soldier overlaps the bed by ${blockOverlap(tank, box, BED_SIZE)} at ${i} (${off})`);
+    }
+    assert.ok(next.x - x0 > 20, `the far bed should be pushed along, moved ${(next.x - x0).toFixed(1)}`);
+    if (off === 0) {
+      assert.equal(box.angle, 0);
+      assert.equal(next.angle, 0);
+      // Two beds' worth of weight: slower than one bed alone.
+      assert.ok(next.x - x0 < (DRIVE_SPEED / (1 + 2 * BED_MASS)) * 4 + 5);
+    } else {
+      assert.ok(Math.abs(next.angle) > 0.02, `the off-centre bed should turn, ${deg(next.angle).toFixed(2)} degrees`);
+    }
+  }
+});
+
+test("bullets stop on a turned crate's shape, not on the old square box", () => {
+  const fireAt = (y: number, vx: number, vy: number, x = 300) => {
+    const state = createState();
+    state.crates.push({ id: 1, x: 500, y: 360, angle: Math.PI / 4, pushMs: 0 });
+    const len = Math.hypot(vx, vy);
+    state.bullets.push({ id: 1, owner: "x", team: "red", x, y, vx: (vx / len) * BULLET_SPEED, vy: (vy / len) * BULLET_SPEED, rangeLeft: 400 });
+    let stopped = false;
+    for (let i = 0; i < 30 && !stopped; i++) {
+      step(state, OPEN_ROOM, {}, config);
+      stopped = state.bullets.length === 0 && state.events.some((e) => e.type === "drop");
+      if (state.bullets[0] && state.bullets[0].x > 560) break; // past the crate
+    }
+    return stopped;
+  };
+  const h = CRATE_SIZE / 2;
+  // Along x, 21 px off centre: the old square (reaching 16 + 4 px) let it pass, but the
+  // turned crate's corner reaches 22.6 px and stops it.
+  assert.equal(fireAt(360 + 21, 1, 0), true, "the turned crate's corner stops the bullet");
+  assert.equal(fireAt(360 + h * Math.SQRT2 + 4.5, 1, 0), false, "just past the corner flies on");
+  // Diagonally, parallel to a face 23 px off centre: the old square (whose corner reaches
+  // 22.6 + 4 px across this path) blocked it, the turned crate's face (16 + 4 px) doesn't.
+  const off = 23;
+  const sx = 500 - 150 + off / Math.SQRT2;
+  const sy = 360 - 150 - off / Math.SQRT2;
+  assert.equal(fireAt(sy, 1, 1, sx), false, "passes beside the turned crate");
+  assert.equal(fireAt(360 - 150, 1, 1, 500 - 150), true, "straight at it still stops");
+});
+
+test("pushing blocks is deterministic: identical runs give bit-identical states", () => {
+  const classroom = getMap("classroom");
+  const run = () => {
+    const state = createState(classroom);
+    for (let i = 0; i < 6; i++) addTank(state, classroom, `p${i}`, i % 2 ? "blue" : "red");
+    const snaps: string[] = [];
+    for (let tick = 0; tick < 900; tick++) {
+      const inputs: Record<string, TankInput> = {};
+      state.tanks.forEach((t, i) => {
+        const phase = (tick + i * 37) % 160;
+        inputs[t.id] = { held: phase > 20, pressed: phase === 0 };
+      });
+      step(state, classroom, inputs, config);
+      if (tick % 100 === 99) snaps.push(JSON.stringify(state));
+    }
+    return { state, snaps };
+  };
+  const a = run();
+  const b = run();
+  assert.deepEqual(a.snaps, b.snaps);
+  assert.ok(a.state.crates.some((c) => c.angle !== 0), "some furniture should have been turned");
+  // Replaying from a copy mid-way (what prediction does) lands on the same state too.
+  const state = createState(classroom);
+  for (let i = 0; i < 4; i++) addTank(state, classroom, `p${i}`, i % 2 ? "blue" : "red");
+  const inputs = (tick: number) => Object.fromEntries(state.tanks.map((t, i) => [t.id, { held: (tick + i * 23) % 90 > 10, pressed: (tick + i * 23) % 90 === 0 }]));
+  for (let tick = 0; tick < 300; tick++) step(state, classroom, inputs(tick), config);
+  const copy = cloneState(state);
+  for (let tick = 300; tick < 600; tick++) step(state, classroom, inputs(tick), config);
+  for (let tick = 300; tick < 600; tick++) step(copy, classroom, inputs(tick), config);
+  assert.equal(JSON.stringify(copy), JSON.stringify(state));
 });
 
 test("power boxes start each round hidden and appear after a random start delay", () => {

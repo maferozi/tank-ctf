@@ -33,6 +33,7 @@ import {
   RAPID_FIRE_WOBBLE,
   SHIELD_HITS,
   SHIELD_MS,
+  SPAWN_SHIELD_MS,
   SPEED_BOOST,
   SPEED_MS,
   SPIN_PAUSE_MS,
@@ -48,7 +49,7 @@ import { createFlags, dropFlagOf, isCarrying, tickFlags, type Flag } from "./fla
 import { circleHitsWall, type GameMap, type Team } from "./map";
 import { getMap } from "./maps";
 import { advanceMatch, createMatch, type Match, type MatchRounds } from "./match";
-import { contact, pushFace, resolveContacts, shove, type Body } from "./physics";
+import { contact, resolveContacts, shove, toLocal, type Body } from "./physics";
 
 export interface Tank {
   id: string;
@@ -69,6 +70,7 @@ export interface Tank {
   reloadMs: number; // progress towards the next round
   shieldMs: number; // power-ups: time left, 0 = inactive
   shieldHits: number; // bullets the shield can still stop; the last one pops it
+  spawnShieldMs: number; // just respawned: can't be hurt until this runs out (not a power)
   speedMs: number;
   flareMs: number;
   flareTimerMs: number; // time until the next flare burst
@@ -95,10 +97,12 @@ export interface Bullet {
 // A movable obstacle. Heavy, blocks bullets, and "sticks" before it starts sliding.
 // A bed is a bigger, heavier one (BED_SIZE, BED_MASS); a desk a slightly bigger, heavier
 // one (DESK_SIZE, DESK_MASS). Plain crates break when shot (CRATE_BREAKS); beds and desks never do.
+// Pushed off-centre it turns (see shove in physics.ts) and stays turned.
 export interface Crate {
   id: number;
   x: number;
   y: number;
+  angle: number; // radians, -π..π; 0 = square with the map, as every map starts
   pushMs: number; // how long it has been pushed recently; loosens it up
   bed?: boolean;
   desk?: boolean;
@@ -117,6 +121,7 @@ export interface PowerBox {
   y: number;
   homeX: number;
   homeY: number;
+  angle: number; // turned by pushes like a crate; back to 0 when it comes home
   respawnMs: number; // 0 = on the map and can be taken; > 0 = hidden, back after this long
   pushMs: number; // same "sticks, then slides" feel as a crate
 }
@@ -199,9 +204,9 @@ export function createMatchState(rounds: MatchRounds, maps?: readonly unknown[],
 function mapObjects(map?: GameMap): Pick<GameState, "crates" | "powerBoxes" | "flags"> {
   return {
     crates: [
-      ...(map?.crates ?? []).map((c): Omit<Crate, "id"> => ({ x: c.x, y: c.y, pushMs: 0 })),
-      ...(map?.beds ?? []).map((b): Omit<Crate, "id"> => ({ x: b.x, y: b.y, pushMs: 0, bed: true })),
-      ...(map?.desks ?? []).map((d): Omit<Crate, "id"> => ({ x: d.x, y: d.y, pushMs: 0, desk: true })),
+      ...(map?.crates ?? []).map((c): Omit<Crate, "id"> => ({ x: c.x, y: c.y, angle: 0, pushMs: 0 })),
+      ...(map?.beds ?? []).map((b): Omit<Crate, "id"> => ({ x: b.x, y: b.y, angle: 0, pushMs: 0, bed: true })),
+      ...(map?.desks ?? []).map((d): Omit<Crate, "id"> => ({ x: d.x, y: d.y, angle: 0, pushMs: 0, desk: true })),
     ].map((c, i) => ({ id: i + 1, ...c })),
     powerBoxes: (map?.powerBoxes ?? []).map((p, i) => ({
       id: i + 1,
@@ -209,6 +214,7 @@ function mapObjects(map?: GameMap): Pick<GameState, "crates" | "powerBoxes" | "f
       y: p.y,
       homeX: p.x,
       homeY: p.y,
+      angle: 0,
       respawnMs: 0,
       pushMs: 0,
     })),
@@ -255,6 +261,7 @@ export function addTank(state: GameState, map: GameMap, id: string, team: Team):
     reloadMs: 0,
     shieldMs: 0,
     shieldHits: 0,
+    spawnShieldMs: 0,
     speedMs: 0,
     flareMs: 0,
     flareTimerMs: 0,
@@ -319,6 +326,7 @@ export function step(
         tank.ammo = MAX_AMMO;
         tank.reloadMs = 0;
         tank.vx = tank.vy = 0;
+        tank.spawnShieldMs = SPAWN_SHIELD_MS;
       }
       tank.held = false;
       tank.pressMs = 0;
@@ -397,31 +405,40 @@ export function step(
 }
 
 // Walking into the face of a crate, desk, bed or (solid) power box: the soldier grips the face
-// like friction, so the sideways part of its step, up to PUSH_GRIP times the forward part, is
-// dropped. It then pushes the box straight on instead of sliding along the face and round
-// the corner. Steeper headings keep the rest of their sideways step and slide. A soldier
-// beside the corner (centre past the face's edge) only grips when stepping towards the box;
-// stepping away, they slip past the corner instead of sticking to it.
+// like friction, so the part of its step along the face, up to PUSH_GRIP times the part into
+// the face, is dropped. Walking a little off-axis into a face then pushes it on instead of
+// sliding along it. Steeper headings, or a block that has turned far enough under the soldier,
+// keep the rest and slide. Only on a face: a soldier touching a corner (centre past the face's
+// edge) isn't gripped, so they slip past the corner instead of sticking to it.
 function gripBoxFace(state: GameState, tank: Tank, dx: number, dy: number): { x: number; y: number } {
   const ahead: Body = { pos: { x: tank.x + dx, y: tank.y + dy }, shape: "circle", size: TANK_RADIUS, mass: TANK_MASS };
-  const hx = Math.cos(tank.angle);
-  const hy = Math.sin(tank.angle);
   const boxes = [...state.crates.map(crateBody), ...(hasPower(tank) ? solidPowerBoxes(state).map(powerBoxBody) : [])];
   for (const b of boxes) {
-    const face = pushFace(ahead, b, hx, hy);
-    if (!face) continue;
-    const alongX = face.nx !== 0;
-    const side = alongX ? dy : dx;
-    const toBox = alongX ? b.pos.y - tank.y : b.pos.x - tank.x;
-    if (Math.abs(toBox) > b.size && Math.sign(side) !== Math.sign(toBox)) return { x: dx, y: dy };
-    const grip = (forward: number) => Math.sign(side) * Math.max(0, Math.abs(side) - PUSH_GRIP * Math.abs(forward));
-    return alongX ? { x: dx, y: grip(dx) } : { x: grip(dy), y: dy };
+    const c = contact(ahead, b);
+    if (!c) continue;
+    const local = toLocal(b, ahead.pos.x, ahead.pos.y);
+    if (Math.abs(local.x) > b.size && Math.abs(local.y) > b.size) continue; // at a corner
+    if (Math.abs(local.x) <= b.size && Math.abs(local.y) <= b.size) continue; // already inside
+    const forward = dx * c.nx + dy * c.ny;
+    if (forward <= 0) continue;
+    // Full grip in the middle of the face, none at its ends: pushing near a corner lets the
+    // soldier slide towards it as the block turns, so they swing it round and slip off.
+    const along = Math.abs(local.x) > b.size ? Math.abs(local.y) : Math.abs(local.x);
+    const grip = PUSH_GRIP * Math.max(0, 1 - along / b.size);
+    const sx = dx - forward * c.nx;
+    const sy = dy - forward * c.ny;
+    const side = Math.hypot(sx, sy);
+    const keep = side > 1e-12 ? Math.max(0, side - grip * forward) / side : 0;
+    return { x: forward * c.nx + sx * keep, y: forward * c.ny + sy * keep };
   }
   return { x: dx, y: dy };
 }
 
+// A flag carrier always walks at CARRIER_SPEED: the speed power doesn't help them, or a
+// boosted carrier ran the flag home before anyone could react.
 function walkSpeed(state: GameState, tank: Tank): number {
-  return DRIVE_SPEED * (tank.speedMs > 0 ? SPEED_BOOST : 1) * (isCarrying(state, tank.id) ? CARRIER_SPEED : 1);
+  if (isCarrying(state, tank.id)) return DRIVE_SPEED * CARRIER_SPEED;
+  return DRIVE_SPEED * (tank.speedMs > 0 ? SPEED_BOOST : 1);
 }
 
 // Walking starts at DRIVE_START of full speed and speeds up over DRIVE_RAMP_MS.
@@ -491,6 +508,7 @@ export function resetRound(state: GameState, map: GameMap): void {
       spinPauseMs: 0,
       vx: 0,
       vy: 0,
+      spawnShieldMs: 0,
     });
     clearPowers(t);
   }
@@ -519,6 +537,7 @@ function collectPowerBoxes(state: GameState): void {
       if (box.respawnMs === 0) {
         box.x = box.homeX;
         box.y = box.homeY;
+        box.angle = 0;
         box.pushMs = 0;
       }
       continue;
@@ -553,6 +572,7 @@ export function givePower(state: GameState, tank: Tank, kind: PowerKind): void {
 }
 
 function tickPowers(state: GameState, tank: Tank): void {
+  tank.spawnShieldMs = tank.spawnShieldMs - TICK_MS > 1e-6 ? tank.spawnShieldMs - TICK_MS : 0;
   // Epsilon: summed TICK_MS can leave a sliver of a whole-second SHIELD_MS.
   tank.shieldMs = tank.shieldMs - TICK_MS > 1e-6 ? tank.shieldMs - TICK_MS : 0;
   if (tank.shieldMs === 0) tank.shieldHits = 0;
@@ -596,9 +616,8 @@ function randomMs(state: GameState, min: number, max: number): number {
 
 function tankBody(t: Tank): Body {
   const mass = !t.alive ? BODY_MASS : t.driving ? TANK_MASS : TANK_MASS * IDLE_TANK_BRAKE;
-  // A walking soldier pushes boxes square along the face it walks into (see pushFace).
-  const heading = t.alive && t.driving ? { x: Math.cos(t.angle), y: Math.sin(t.angle) } : undefined;
-  return { pos: t, shape: "circle", size: TANK_RADIUS, mass, heading };
+  // Circles ignore pos.angle, so the soldier's heading never turns its body.
+  return { pos: t, shape: "circle", size: TANK_RADIUS, mass };
 }
 
 function crateBody(c: Crate): Body {
@@ -699,6 +718,10 @@ function stepBullets(state: GameState, map: GameMap, dt: number): void {
       const dx = t.x - b.x;
       const dy = t.y - b.y;
       if (dx * dx + dy * dy <= hitR * hitR) {
+        if (t.spawnShieldMs > 0) {
+          state.events.push({ type: "shieldHit", tankId: t.id, x: b.x, y: b.y });
+          return false;
+        }
         if (t.shieldMs > 0) {
           // Each bullet uses up one hit; the last one pops the shield.
           t.shieldHits--;

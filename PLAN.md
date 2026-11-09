@@ -96,6 +96,11 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
   bullets or lasts 10 s (was every bullet for 14 s), so a shielded carrier can be stopped.
 - Smaller flags and bases (5 Nov 2026): `FLAG_RADIUS` 10 → 6, `BASE_RADIUS` 34 → 20; you take a
   flag by reaching it and score by standing on your stand, and both are drawn at those sizes.
+- Rules and voice option (9 Nov 2026, players' calls): shield 5 hits; 2 s spawn protection
+  after a respawn; a flag carrier never gets the speed boost; you can only score while your own
+  flag is home; soldier collision radius 14 → 12 (matches the drawn body, fits narrow gaps) with
+  a slimmer "you" ring; each player can share their voice with the other team (Team only /
+  Both teams chip next to the mic, default Team only); blocks turn when pushed off-centre.
 - Spray, flicker and lag (9 Nov 2026): fast tapping fires every tap (bounce guard 100 → 66 ms),
   taps that can't fire don't flip the gun, bursts stay within 12° of their first shot, a finger
   tap never walks (hold 60 → 100 ms), dry click on an empty magazine, second-finger taps count.

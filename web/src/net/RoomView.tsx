@@ -9,7 +9,7 @@ import { createOnlineDriver } from "@/game/onlineDriver";
 import { Icon } from "./Icon";
 import { Lobby } from "./Lobby";
 import { Logo } from "./Logo";
-import { MicChip } from "./MicChip";
+import { MicChip, ShareChip } from "./MicChip";
 import { RoomChip } from "./RoomChip";
 import { RoundMaps } from "./MapPicker";
 import { PlayerFields, usePlayerSetup } from "./PlayerSetup";
@@ -87,6 +87,7 @@ export function RoomView({ rawCode }: { rawCode: string }) {
     <GameScreen makeDriver={() => createOnlineDriver(session)}>
       <RoomChip code={code} players={roster.players.length} />
       <MicChip voice={session.voice} compact />
+      <ShareChip voice={session.voice} compact />
       <LeaveButton onLeave={leave} />
     </GameScreen>
   );

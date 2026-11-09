@@ -217,6 +217,24 @@ assert.equal(inbox(wes).length, 1, "match: red can't reach blue");
 assert.equal(inbox(xan).length, 1, "match: blue reaches blue");
 assert.equal(inbox(xan)[0]!.from, wes.sessionId);
 
+// A player shares their voice with the other team (their own choice).
+const shares = (bot: Room) => veeRosters.at(-1)?.players.find((p) => p.id === bot.sessionId)?.shareVoice;
+assert.equal(shares(vee), false, "voice is team-only by default");
+vee.send(MSG.shareVoice, { on: true });
+await sleep(200);
+assert.equal(shares(vee), true);
+assert.equal(shares(wes), false, "only the player who asked shares");
+say(vee, wes);
+say(wes, vee);
+await sleep(200);
+assert.equal(inbox(wes).length, 2, "sharing: red's signaling reaches blue mid-match");
+assert.equal(inbox(vee).length, 1, "the connection is set up both ways (blue sends no audio unless sharing)");
+vee.send(MSG.shareVoice, { on: false });
+await sleep(200);
+say(vee, wes);
+await sleep(200);
+assert.equal(inbox(wes).length, 2, "stopped sharing: red can't reach blue");
+
 // Rate limit: a flood is cut to the burst allowance.
 // (Sent over two seconds: Colyseus itself cuts a client sending over 240 messages a second.)
 for (let i = 0; i < 200; i++) say(wes, xan);
@@ -238,6 +256,6 @@ console.log(
   `smoke ok: room ${roomId}, lobby (host, team switch, host move, start rules), ${rate} snapshots/s, ` +
     `teams locked in play, tap fired, walked ${moved.toFixed(0)} px, dropped player rejoined as the same soldier, ` +
     `${bobDecoder.keyframes} keyframes + ${bobDecoder.deltas} deltas decoded; ` +
-    `voice relay in ${voiceRoom}: lobby open, match team-only, from stamped, oversized dropped, flood cut to ${flood}`,
+    `voice relay in ${voiceRoom}: lobby open, match team-only, players can share voice with the other team, from stamped, oversized dropped, flood cut to ${flood}`,
 );
 process.exit(0);
