@@ -10,6 +10,7 @@ import {
   FLAG_RETURN_MS,
   RESPAWN_MS,
   SHIELD_HITS,
+  SPEED_BOOST,
   SPAWN_SHIELD_MS,
   SPAWN_PAD_SIZE,
   TANK_RADIUS,
@@ -345,7 +346,7 @@ test("you can't score while the other team holds your flag; once it's home you c
   assert.ok(events.some((e) => e.type === "capture"));
 });
 
-test("a flag carrier with the speed power still walks at carrier speed", () => {
+test("a flag carrier with the speed power walks at boost x carrier speed (1.28x)", () => {
   const { state, red, blueFlag } = setup();
   givePower(state, red, "speed");
   red.x = blueFlag.homeX;
@@ -360,7 +361,7 @@ test("a flag carrier with the speed power still walks at carrier speed", () => {
   const x0 = red.x;
   run(state, 30, { [red.id]: hold });
   const speed = (red.x - x0) / (30 * TICK_MS / 1000);
-  assert.ok(Math.abs(speed - DRIVE_SPEED * CARRIER_SPEED) < 1, `walked ${speed.toFixed(1)} px/s`);
+  assert.ok(Math.abs(speed - DRIVE_SPEED * SPEED_BOOST * CARRIER_SPEED) < 1, `walked ${speed.toFixed(1)} px/s`);
 });
 
 test("a respawned soldier is protected for SPAWN_SHIELD_MS, then can be shot", () => {

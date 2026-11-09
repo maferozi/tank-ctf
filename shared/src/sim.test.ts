@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   DEFAULT_HOLD_MS,
+  MAX_REWIND_TICKS,
   FIRE_COOLDOWN_MS,
   RAPID_FIRE_WOBBLE,
   BED_MASS,
@@ -209,14 +210,14 @@ test("a tap the cooldown stops doesn't fire and doesn't flip the spin", () => {
   assert.equal(tank.spinDir, dir, "spin direction unchanged");
 });
 
-test("a tap with an empty magazine clicks, doesn't fire and doesn't flip the spin", { skip: UNLIMITED_AMMO && "UNLIMITED_AMMO is on" }, () => {
+test("a tap with an empty magazine clicks and doesn't fire, but still reverses the spin", { skip: UNLIMITED_AMMO && "UNLIMITED_AMMO is on" }, () => {
   const state = createState();
   const tank = addTank(state, map, "p1", "red");
   tank.ammo = 0;
   const dir = tank.spinDir;
   step(state, map, { p1: tap }, config);
   assert.deepEqual(state.events.map((e) => e.type), ["dry"]);
-  assert.equal(tank.spinDir, dir);
+  assert.equal(tank.spinDir, -dir, "you can still turn the other way to aim while empty");
 });
 
 test("a normal finger tap (up to 90 ms) never starts walking", () => {
@@ -1142,7 +1143,7 @@ test("bullets stop on a turned crate's shape, not on the old square box", () => 
     const state = createState();
     state.crates.push({ id: 1, x: 500, y: 360, angle: Math.PI / 4, pushMs: 0 });
     const len = Math.hypot(vx, vy);
-    state.bullets.push({ id: 1, owner: "x", team: "red", x, y, vx: (vx / len) * BULLET_SPEED, vy: (vy / len) * BULLET_SPEED, rangeLeft: 400 });
+    state.bullets.push({ id: 1, owner: "x", team: "red", x, y, vx: (vx / len) * BULLET_SPEED, vy: (vy / len) * BULLET_SPEED, rangeLeft: 400, rewind: 0 });
     let stopped = false;
     for (let i = 0; i < 30 && !stopped; i++) {
       step(state, OPEN_ROOM, {}, config);
@@ -1300,5 +1301,62 @@ test("a shield lasts SHIELD_MS at most, even with hits left", () => {
   assert.equal(target.shieldMs, 0);
   assert.equal(target.shieldHits, 0);
   shoot();
+  assert.equal(target.alive, false);
+});
+
+// A shooter who saw the enemy 9 ticks ago (online, others are drawn in the past).
+function laggedShot(view: number) {
+  const state = createState();
+  const shooter = addTank(state, map, "a", "red");
+  const target = addTank(state, map, "b", "blue");
+  shooter.x = 300;
+  shooter.y = 300;
+  shooter.angle = 0;
+  // The enemy was right in front at y 300 (where the shooter's screen showed it) and has
+  // since walked 40 px down, out of the line of fire.
+  target.x = 420;
+  target.y = 340;
+  const history = (id: string, tick: number) => (id === "b" && tick < state.tick ? { x: 420, y: 300 } : null);
+  const cfg = { holdMs: 60, rewind: history };
+  step(state, map, { a: { held: false, pressed: true, view } }, cfg);
+  for (let i = 0; i < 30; i++) {
+    target.x = 420;
+    target.y = 340;
+    step(state, map, {}, cfg);
+  }
+  return target;
+}
+
+test("lag compensation: a shot hits the enemy where the shooter saw them", () => {
+  assert.equal(laggedShot(9).alive, false, "hit where the shooter saw them");
+  assert.equal(laggedShot(0).alive, true, "without rewind the shot misses: they moved away");
+});
+
+test("lag compensation is capped at MAX_REWIND_TICKS and ignores junk", () => {
+  const state = createState();
+  const tank = addTank(state, map, "a", "red");
+  for (const view of [1e9, -5, Number.NaN, 3.6]) {
+    tank.cooldownMs = 0;
+    step(state, map, { a: { held: false, pressed: true, view } }, config);
+    const b = state.bullets.at(-1)!;
+    assert.ok(b.rewind >= 0 && b.rewind <= MAX_REWIND_TICKS && Number.isInteger(b.rewind), `view ${view} -> ${b.rewind}`);
+    for (let i = 0; i < 6; i++) step(state, map, {}, config);
+  }
+});
+
+test("a fast bullet grazing a soldier's edge between two ticks still hits", () => {
+  const state = createState();
+  addTank(state, map, "a", "red");
+  const target = addTank(state, map, "b", "blue");
+  target.x = 500;
+  target.y = 300;
+  // Its path passes 15.5 px from the centre (inside TANK_RADIUS + BULLET_RADIUS = 16), and
+  // its tick-end positions straddle the target, more than 15.5 px away from it each.
+  state.bullets.push({ id: 99, owner: "a", team: "red", x: 500 - 5.2 - BULLET_SPEED / 60, y: 315.5, vx: BULLET_SPEED, vy: 0, rangeLeft: 400, rewind: 0 });
+  for (let i = 0; i < 4 && target.alive; i++) {
+    target.x = 500;
+    target.y = 300;
+    step(state, map, {}, config);
+  }
   assert.equal(target.alive, false);
 });

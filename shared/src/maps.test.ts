@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BED_SIZE, CRATE_SIZE, DESK_SIZE, SPAWN_PAD_SIZE, POWER_BOX_SIZE, TANK_RADIUS, TILE } from "./constants";
 import { boxHitsSolid, circleHitsSolid, isBlockedAt, isWallAt, type GameMap } from "./map";
-import { MAPS } from "./maps";
+import { MAPS, getMap } from "./maps";
 
 const tileOf = (p: { x: number; y: number }) => ({ c: Math.floor(p.x / TILE), r: Math.floor(p.y / TILE) });
 
@@ -163,4 +163,20 @@ test("the new maps' walls and water are symmetric too", () => {
     }
     assert.ok(mirror || rotate, `${map.name} walls are not symmetric`);
   }
+});
+
+test("Classroom: neighbouring beds stand too close for a soldier to slip between", () => {
+  const beds = getMap("classroom").beds;
+  let pairs = 0;
+  for (const a of beds) {
+    for (const b of beds) {
+      const sameRow = a.y === b.y && b.x > a.x && b.x - a.x <= 3 * TILE;
+      const sameCol = a.x === b.x && b.y > a.y && b.y - a.y <= 3 * TILE;
+      if (!sameRow && !sameCol) continue;
+      pairs++;
+      const gap = (sameRow ? b.x - a.x : b.y - a.y) - BED_SIZE;
+      assert.ok(gap >= 0 && gap < TANK_RADIUS * 2, `beds at ${a.x},${a.y} and ${b.x},${b.y}: ${gap} px gap`);
+    }
+  }
+  assert.ok(pairs > 10, `found ${pairs} neighbouring pairs`);
 });

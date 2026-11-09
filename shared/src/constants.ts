@@ -32,7 +32,10 @@ export const CRATE_STATIC = 2;
 export const CRATE_BREAKAWAY_MS = 600;
 // Beds (Classroom): big movable blocks, 2 x 2 tiles, twice a crate's weight. They stick and
 // loosen like crates.
-export const BED_SIZE = 76; // px, square; leaves a 4 px gap between beds placed side by side
+// 108: beds one tile apart (120 px between centres) leave 12 px gaps, narrower than a soldier
+// (2 x TANK_RADIUS = 24 px), so nobody squeezes between them: go round or push them apart
+// (players' call; was 76 with 44 px gaps, then 86 with 34 px).
+export const BED_SIZE = 108; // px, square
 export const BED_MASS = 6;
 // Desks (Office): one-tile furniture, a bit bigger and heavier than a crate. They stick and
 // loosen like crates, stop bullets and never break.
@@ -73,6 +76,10 @@ export const DRIVE_RAMP_MS = 400;
 export const BULLET_SPEED = 620; // px/s
 export const BULLET_RADIUS = 4;
 export const BULLET_RANGE = 410; // px travelled before the bullet drops
+// Lag compensation: a bullet is checked against enemies where they were on the shooter's
+// screen when they fired (other players are drawn a little in the past online), up to this
+// far back. More than that and the victim would die too long after reaching cover.
+export const MAX_REWIND_TICKS = 15; // 250 ms
 export const BULLET_FADE = 80; // last px of range drawn fading out
 // Only stops input bounce: well under the original's ~10 taps/s (100 ms apart), so every
 // real spray tap fires. At 100 it equalled that gap and dropped a quarter of real taps.

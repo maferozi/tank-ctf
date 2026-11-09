@@ -37,7 +37,9 @@ export class InputQueue {
     for (const f of frames) {
       if (!f || typeof f !== "object") continue; // malformed client message: never crash the room
       if (!Number.isInteger(f.seq) || f.seq <= this.lastQueued) continue; // duplicate or out of order
-      this.queue.push({ seq: f.seq, held: f.held === true, pressed: f.pressed === true });
+      const frame: InputFrame = { seq: f.seq, held: f.held === true, pressed: f.pressed === true };
+      if (frame.pressed && typeof f.view === "number" && Number.isFinite(f.view)) frame.view = f.view; // clamped by the sim
+      this.queue.push(frame);
       this.lastQueued = f.seq;
     }
     while (this.queue.length > MAX_INPUT_QUEUE) this.dropOne(true);
@@ -57,7 +59,7 @@ export class InputQueue {
     if (!f) return { held: this.lastHeld, pressed: false, stale: true };
     this.ack = f.seq;
     this.lastHeld = f.held;
-    return { held: f.held, pressed: f.pressed };
+    return f.view === undefined ? { held: f.held, pressed: f.pressed } : { held: f.held, pressed: f.pressed, view: f.view };
   }
 
   private adapt(): void {
@@ -92,6 +94,7 @@ export class InputQueue {
     if (!pressed || !into) return;
     if (into.pressed) this.lostPresses++;
     into.pressed = true;
+    if (dropped.view !== undefined && into.view === undefined) into.view = dropped.view;
   }
 }
 
@@ -119,6 +122,7 @@ export class Predictor {
   // send plus what happened on this tick (for effects like your muzzle flash).
   tick(input: TankInput): { frame: InputFrame; events: GameEvent[] } {
     const frame: InputFrame = { seq: ++this.seq, held: input.held, pressed: input.pressed };
+    if (input.pressed && input.view !== undefined) frame.view = input.view;
     this.pending.push(frame);
     if (this.pending.length > MAX_PENDING) this.pending.shift();
     if (!this.state) return { frame, events: [] };

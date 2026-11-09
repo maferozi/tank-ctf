@@ -1,5 +1,7 @@
 import {
   DEFAULT_HOLD_MS,
+  TANK_RADIUS,
+  MAX_REWIND_TICKS,
   DEFAULT_MAP,
   MSG,
   Predictor,
@@ -64,8 +66,27 @@ interface Timed {
 export function createOnlineDriver(session: Session): Driver {
   const { room } = session;
   const me = room.sessionId;
-  const predictor = new Predictor(me, { holdMs: DEFAULT_HOLD_MS });
   const snaps: Timed[] = [];
+  // Your shots are checked against the others where your screen shows them (lag
+  // compensation): the server rewinds them by your view lag, and your own prediction looks
+  // them up in the snapshots it is drawing from.
+  const predictor = new Predictor(me, { holdMs: DEFAULT_HOLD_MS, rewind: seenAt });
+  let viewTicks = 0; // how far behind your predicted present the others are drawn
+
+  function seenAt(id: string, tick: number): { x: number; y: number } | null {
+    for (let i = snaps.length - 1; i > 0; i--) {
+      const b = snaps[i]!.state;
+      const a = snaps[i - 1]!.state;
+      if (a.tick > tick) continue;
+      if (b.tick < tick) return null;
+      const ta = findTank(a, id);
+      const tb = findTank(b, id);
+      if (!ta?.alive || !tb?.alive) return null;
+      const f = b.tick > a.tick ? (tick - a.tick) / (b.tick - a.tick) : 1;
+      return { x: ta.x + (tb.x - ta.x) * f, y: ta.y + (tb.y - ta.y) * f };
+    }
+    return null;
+  }
   const serverEvents: GameEvent[] = [];
   let clockOffset: number | null = null; // local time - server sim time, best (lowest) seen
   let acc = 0;
@@ -96,6 +117,7 @@ export function createOnlineDriver(session: Session): Driver {
   const bullets: Bullet[] = [];
   const flags: Flag[] = [];
   let mineSlot: Tank | null = null;
+  const nearSlots = new Map<string, Tank>(); // others drawn closer to the present (see below)
 
   // Dev-only health numbers, readable as window.__net in the browser console.
   const stats = {
@@ -202,6 +224,20 @@ export function createOnlineDriver(session: Session): Driver {
     return best;
   }
 
+  function nearYou(x: Tank, mine: Tank | null, predicted: GameState): Tank {
+    if (!mine || !x.alive) return x;
+    const p = findTank(predicted, x.id);
+    if (!p?.alive) return x;
+    const d = Math.hypot(p.x - mine.x, p.y - mine.y);
+    if (d >= NEAR_PX) return x;
+    const w = Math.min(1, (NEAR_PX - d) / (NEAR_PX - TOUCH_PX));
+    const slot = copyInto(nearSlots.get(x.id) ?? null, x);
+    nearSlots.set(x.id, slot);
+    slot.x = x.x + (p.x - x.x) * w;
+    slot.y = x.y + (p.y - x.y) * w;
+    return slot;
+  }
+
   return {
     map: DEFAULT_MAP,
     localId: me,
@@ -215,7 +251,9 @@ export function createOnlineDriver(session: Session): Driver {
       let frames: InputFrame[] | null = null;
       const events: GameEvent[] = [];
       while (acc >= TICK_MS) {
-        const { frame, events: tickEvents } = predictor.tick(button.consume());
+        const input = button.consume();
+        if (input.pressed) input.view = viewTicks;
+        const { frame, events: tickEvents } = predictor.tick(input);
         (frames ??= []).push(frame);
         for (const e of tickEvents) if (e.tankId === me && PREDICTED_EVENTS.has(e.type)) events.push(e);
         acc -= TICK_MS;
@@ -244,6 +282,7 @@ export function createOnlineDriver(session: Session): Driver {
 
       // Everyone else: interpolated from snapshots, delayMs in the past.
       const t = now - clockOffset - delayMs;
+      viewTicks = Math.max(0, Math.min(MAX_REWIND_TICKS, Math.round(predictor.state.tick - t / TICK_MS)));
       let next = -1;
       for (let i = 0; i < snaps.length; i++) {
         if (snaps[i]!.serverMs > t) {
@@ -305,7 +344,7 @@ export function createOnlineDriver(session: Session): Driver {
       }
 
       tanks.length = 0;
-      for (const x of others.tanks) if (x.id !== me) tanks.push(x);
+      for (const x of others.tanks) if (x.id !== me) tanks.push(nearYou(x, mine, predicted));
       if (mine) tanks.push(mine);
       bullets.length = 0;
       for (const b of others.bullets) if (b.owner !== me) bullets.push(b);
@@ -337,6 +376,12 @@ export function createOnlineDriver(session: Session): Driver {
     },
   };
 }
+
+// Others are drawn a little in the past, but you push and bump into them in the present.
+// Close to you that looked like walking through each other, so within NEAR_PX a soldier is
+// drawn sliding over to where your prediction has them now (fully once they touch you).
+const NEAR_PX = 90;
+const TOUCH_PX = TANK_RADIUS * 2 + 6;
 
 function findTank(state: GameState | null, id: string): Tank | undefined {
   if (state) for (const t of state.tanks) if (t.id === id) return t;

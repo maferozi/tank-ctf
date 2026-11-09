@@ -21,6 +21,7 @@ import {
   FLARE_MS,
   HIT_KNOCKBACK,
   MAX_AMMO,
+  MAX_REWIND_TICKS,
   POWER_BOX_SIZE,
   POWER_RESPAWN_MAX_MS,
   POWER_RESPAWN_MIN_MS,
@@ -92,6 +93,9 @@ export interface Bullet {
   vx: number;
   vy: number;
   rangeLeft: number; // px left before the bullet drops
+  // Lag compensation: how many ticks behind the present the shooter saw other players when
+  // firing. Hits on enemies are checked against where they were that long ago.
+  rewind: number;
 }
 
 // A movable obstacle. Heavy, blocks bullets, and "sticks" before it starts sliding.
@@ -163,10 +167,18 @@ export interface TankInput {
   // Not a real sample: the server ran out of this player's input and repeats the last held
   // state. It doesn't add hold time, so a late packet can't turn a tap into a walk.
   stale?: boolean;
+  // With a press: how many ticks behind the present this player sees the others (online, they
+  // are drawn a little in the past). The shot is checked against them as seen. 0 or absent:
+  // no rewind (solo, bots).
+  view?: number;
 }
 
 export interface SimConfig {
   holdMs: number;
+  // Lag compensation: where soldier `id` was at `tick` (from the server's position history,
+  // or on a client from its snapshots), or null if unknown. Without it, or when it doesn't
+  // know, hits use present positions.
+  rewind?: (id: string, tick: number) => { x: number; y: number } | null;
 }
 
 // Pass the map to place its crates, power boxes and flags; without one the arena starts
@@ -349,9 +361,9 @@ export function step(
     }
     tickPowers(state, tank);
 
-    // A press fires straight away and reverses the spin. A press that can't fire (cooldown,
-    // empty magazine) leaves the gun alone: flipping on taps that don't shoot made a fast
-    // spray swing to one side.
+    // A press fires straight away and reverses the spin. A press inside the bounce guard
+    // (FIRE_COOLDOWN_MS) does nothing at all: flipping on those made a fast spray swing to
+    // one side. With an empty magazine a press still reverses the spin (see below).
     const pressStarted = input.pressed || (input.held && !tank.held);
     if (pressStarted) {
       if (canFire(tank)) {
@@ -359,11 +371,15 @@ export function step(
         if (sinceLastShot <= RAPID_FIRE_MS) tank.angle = clampAround(tank.angle, tank.aimAngle, RAPID_FIRE_WOBBLE);
         else tank.aimAngle = tank.angle;
         tank.lastPressTick = state.tick;
-        fire(state, tank);
+        fire(state, tank, rewindTicks(input.view));
         tank.spinDir = tank.spinDir === 1 ? -1 : 1;
         tank.spinPauseMs = SPIN_PAUSE_MS;
       } else if (tank.cooldownMs <= 0) {
+        // Empty magazine: a dry click, but the gun still reverses, so you can keep turning
+        // to aim while you wait for a round (Asad's call). Only bounce-guard taps don't flip.
         state.events.push({ type: "dry", tankId: tank.id, x: tank.x, y: tank.y });
+        tank.spinDir = tank.spinDir === 1 ? -1 : 1;
+        tank.spinPauseMs = SPIN_PAUSE_MS;
       }
       tank.pressMs = 0;
       tank.driving = false;
@@ -400,7 +416,7 @@ export function step(
   // boxes still on the map are solid in the push step.
   collectPowerBoxes(state);
   pushBodies(state, map);
-  stepBullets(state, map, dt);
+  stepBullets(state, map, dt, config);
   tickFlags(state);
 }
 
@@ -434,11 +450,10 @@ function gripBoxFace(state: GameState, tank: Tank, dx: number, dy: number): { x:
   return { x: dx, y: dy };
 }
 
-// A flag carrier always walks at CARRIER_SPEED: the speed power doesn't help them, or a
-// boosted carrier ran the flag home before anyone could react.
+// Carrying a flag slows you by CARRIER_SPEED, with or without the speed power: a boosted
+// carrier walks at SPEED_BOOST x CARRIER_SPEED (1.6 x 0.8 = 1.28 x normal).
 function walkSpeed(state: GameState, tank: Tank): number {
-  if (isCarrying(state, tank.id)) return DRIVE_SPEED * CARRIER_SPEED;
-  return DRIVE_SPEED * (tank.speedMs > 0 ? SPEED_BOOST : 1);
+  return DRIVE_SPEED * (tank.speedMs > 0 ? SPEED_BOOST : 1) * (isCarrying(state, tank.id) ? CARRIER_SPEED : 1);
 }
 
 // Walking starts at DRIVE_START of full speed and speeds up over DRIVE_RAMP_MS.
@@ -657,14 +672,31 @@ function canFire(tank: Tank): boolean {
   return tank.cooldownMs <= 0 && (UNLIMITED_AMMO || tank.ammo > 0);
 }
 
-function fire(state: GameState, tank: Tank): void {
+function fire(state: GameState, tank: Tank, rewind = 0): void {
   if (!canFire(tank)) return;
   tank.cooldownMs = FIRE_COOLDOWN_MS;
   if (!UNLIMITED_AMMO) tank.ammo--;
-  spawnBullet(state, tank, tank.angle);
+  spawnBullet(state, tank, tank.angle, rewind);
 }
 
-function spawnBullet(state: GameState, tank: Tank, angle: number): void {
+// Does the segment (ax, ay) -> (bx, by) come within r of (cx, cy)?
+function segmentHitsCircle(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, r: number): boolean {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 > 0 ? Math.max(0, Math.min(1, ((cx - ax) * dx + (cy - ay) * dy) / len2)) : 0;
+  const px = ax + dx * t - cx;
+  const py = ay + dy * t - cy;
+  return px * px + py * py <= r * r;
+}
+
+// A client's claimed view lag, made safe: whole ticks within 0..MAX_REWIND_TICKS.
+function rewindTicks(view: unknown): number {
+  if (typeof view !== "number" || !Number.isFinite(view)) return 0;
+  return Math.max(0, Math.min(MAX_REWIND_TICKS, Math.round(view)));
+}
+
+function spawnBullet(state: GameState, tank: Tank, angle: number, rewind = 0): void {
   const cos = Math.cos(angle);
   const sin = Math.sin(angle);
   const muzzle = TANK_RADIUS + BULLET_RADIUS + 2;
@@ -679,13 +711,16 @@ function spawnBullet(state: GameState, tank: Tank, angle: number): void {
     vx: cos * BULLET_SPEED,
     vy: sin * BULLET_SPEED,
     rangeLeft: BULLET_RANGE,
+    rewind,
   });
   state.events.push({ type: "fire", tankId: tank.id, x, y });
 }
 
-function stepBullets(state: GameState, map: GameMap, dt: number): void {
+function stepBullets(state: GameState, map: GameMap, dt: number, config: SimConfig): void {
   const hitR = TANK_RADIUS + BULLET_RADIUS;
   state.bullets = state.bullets.filter((b) => {
+    const fromX = b.x;
+    const fromY = b.y;
     b.x += b.vx * dt;
     b.y += b.vy * dt;
     b.rangeLeft -= BULLET_SPEED * dt;
@@ -715,9 +750,11 @@ function stepBullets(state: GameState, map: GameMap, dt: number): void {
 
     for (const t of state.tanks) {
       if (!t.alive || t.id === b.owner || t.team === b.team) continue;
-      const dx = t.x - b.x;
-      const dy = t.y - b.y;
-      if (dx * dx + dy * dy <= hitR * hitR) {
+      // Where the shooter saw this enemy (lag compensation), else where it is now.
+      const seen = (b.rewind > 0 && config.rewind?.(t.id, state.tick - b.rewind)) || t;
+      // The whole stretch the bullet flew this tick, not just where it ended: at 10 px a
+      // tick it could otherwise skip past the edge of a soldier.
+      if (segmentHitsCircle(fromX, fromY, b.x, b.y, seen.x, seen.y, hitR)) {
         if (t.spawnShieldMs > 0) {
           state.events.push({ type: "shieldHit", tankId: t.id, x: b.x, y: b.y });
           return false;

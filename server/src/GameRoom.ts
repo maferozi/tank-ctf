@@ -9,6 +9,7 @@ import {
   VOICE_PER_SECOND,
   KEYFRAME_EVERY_SNAPSHOTS,
   MAX_FRAMES_PER_MESSAGE,
+  MAX_REWIND_TICKS,
   MAX_PLAYERS,
   MSG,
   RECONNECT_SECONDS,
@@ -36,6 +37,7 @@ import {
   type MatchRounds,
   type MoveMessage,
   type ShareVoiceMessage,
+  type SimConfig,
   type Player,
   type RoomMetadata,
   type RoomPhase,
@@ -187,6 +189,7 @@ export class GameRoom extends Room {
     // A fresh seed per match, picked here outside the sim, so power-box timings and kinds
     // differ every game. It reaches the clients in the snapshots.
     this.sim = createMatchState(this.rounds, this.maps, (Math.random() * 0x7fffffff) | 0);
+    this.positions.clear(); // a new match starts its ticks from 0 again
     this.queues.clear();
     this.pendingEvents = [];
     this.lastSent = null; // everyone starts with a keyframe
@@ -246,7 +249,8 @@ export class GameRoom extends Room {
     const finalBanner = this.sim.winner !== null && this.sim.match.round >= this.sim.match.rounds;
     const inputs: Record<string, TankInput> = {};
     for (const [id, queue] of this.queues) inputs[id] = queue.next();
-    step(this.sim, getMap(this.sim.mapId), inputs, { holdMs: DEFAULT_HOLD_MS });
+    step(this.sim, getMap(this.sim.mapId), inputs, this.simConfig);
+    this.recordPositions();
     if (finalBanner && this.sim.winner === null) {
       this.endMatch();
       return;
@@ -327,6 +331,21 @@ export class GameRoom extends Room {
     void voiceConfig(client.sessionId).then((config) => {
       if (this.clients.getById(client.sessionId)) client.send(MSG.voiceConfig, config);
     });
+  }
+
+  // Lag compensation: where every living soldier was over the last MAX_REWIND_TICKS ticks,
+  // so a shot is checked against enemies where the shooter saw them (see Bullet.rewind).
+  private positions = new Map<number, Map<string, { x: number; y: number }>>();
+  private readonly simConfig: SimConfig = {
+    holdMs: DEFAULT_HOLD_MS,
+    rewind: (id, tick) => this.positions.get(tick)?.get(id) ?? null,
+  };
+
+  private recordPositions() {
+    const now = new Map<string, { x: number; y: number }>();
+    for (const t of this.sim.tanks) if (t.alive) now.set(t.id, { x: t.x, y: t.y });
+    this.positions.set(this.sim.tick, now);
+    this.positions.delete(this.sim.tick - MAX_REWIND_TICKS - 1);
   }
 
   private roster(): Roster {

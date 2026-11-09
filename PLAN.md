@@ -96,8 +96,12 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
   bullets or lasts 10 s (was every bullet for 14 s), so a shielded carrier can be stopped.
 - Smaller flags and bases (5 Nov 2026): `FLAG_RADIUS` 10 → 6, `BASE_RADIUS` 34 → 20; you take a
   flag by reaching it and score by standing on your stand, and both are drawn at those sizes.
+- Hits and collisions online (9 Nov 2026): lag compensation (shots checked against enemies as
+  the shooter saw them, up to 250 ms back), swept bullet hits, nearby players drawn at their
+  present position so soldiers don't seem to walk through each other; beds bigger (108 px,
+  12 px gaps, too narrow to slip between); an empty-magazine tap reverses the turn again (Asad).
 - Rules and voice option (9 Nov 2026, players' calls): shield 5 hits; 2 s spawn protection
-  after a respawn; a flag carrier never gets the speed boost; you can only score while your own
+  after a respawn; a flag carrier is slowed by 0.8x on top of any speed boost (1.28x boosted); you can only score while your own
   flag is home; soldier collision radius 14 → 12 (matches the drawn body, fits narrow gaps) with
   a slimmer "you" ring; each player can share their voice with the other team (Team only /
   Both teams chip next to the mic, default Team only); blocks turn when pushed off-centre.

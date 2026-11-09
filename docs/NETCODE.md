@@ -138,6 +138,24 @@ spawn with the old banner for a round trip (the flicker at every round restart).
 virtual-time harness over 45 round ends at 100-250 ms ping: mixed frames 351-606 ms before, 0
 after.
 
+## Lag compensation and nearby players (9 Nov 2026)
+- **Hits as the shooter saw them.** A press sample carries `view`: how many ticks behind its
+  predicted present the client draws the others. The bullet keeps it (`Bullet.rewind`, at most
+  `MAX_REWIND_TICKS` = 15, 250 ms), and every hit check against an enemy uses where that enemy
+  was that many ticks ago: the server keeps the last 15 ticks of positions
+  (`GameRoom.positions`, passed to `step()` as `SimConfig.rewind`); a client's prediction
+  looks the same positions up in the snapshots it is drawing from. Before, others were drawn
+  ~100-200 ms in the past but hits used present positions: a walking soldier is ~28 px away
+  from where you see them after 150 ms, more than the 16 px hit radius, so bullets passed
+  through soldiers on screen and kills happened where nothing was drawn.
+- **Swept bullet hits:** the bullet's whole path in a tick is tested against soldiers.
+- **Nearby players drawn in the present:** within 90 px of you, another soldier slides from its
+  interpolated (past) position to where your prediction has it now, fully once you touch, so
+  collisions and shoves look like collisions instead of walking through each other.
+- Checked: sim tests (a lagged shot hits where the shooter saw the enemy and misses without
+  rewind; junk `view` values clamped; an edge graze between ticks hits), smoke, and an 8-bot
+  heavy-fire load test at 150 ms latency (0 of 2,569 states differed, 0 gaps over 100 ms).
+
 ## Possible later improvements
 1. Measure the adaptive delay on the deployed server and a real phone; tune its floor (70 ms)
    and the 2 × p95 margin from that.
