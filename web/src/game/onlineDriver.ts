@@ -47,7 +47,9 @@ const MAX_SERVER_EVENTS = 64;
 const STARVED_FRAMES_RESET = 10;
 const OFFSET_SAMPLES = 30; // the last second of snapshots
 // Events your own prediction shows straight away (tankId = you); the server's copies are skipped.
-const PREDICTED_EVENTS = new Set<GameEvent["type"]>(["fire", "drop", "crateBreak"]);
+// Longest a late snapshot is bridged by carrying others on along their last motion.
+const EXTRAPOLATE_MS = 120;
+const PREDICTED_EVENTS = new Set<GameEvent["type"]>(["fire", "drop", "dry", "crateBreak"]);
 
 interface Timed {
   serverMs: number;
@@ -110,6 +112,8 @@ export function createOnlineDriver(session: Session): Driver {
     deltas: 0,
     keyframeRequests: 0, // deltas that didn't apply (should stay 0)
     offsetResets: 0, // clock re-baselined after a run of starved frames
+    extrapolated: 0, // frames where others were carried past the newest snapshot
+    maxExtrapolationMs: 0,
     me: { x: 0, y: 0, spinDir: 1, driving: false, shown: false }, // as drawn
   };
   if (process.env.NODE_ENV !== "production") (window as unknown as { __net?: unknown }).__net = stats;
@@ -252,12 +256,35 @@ export function createOnlineDriver(session: Session): Driver {
       starvedStreak = next === -1 ? starvedStreak + 1 : 0;
       stats.ahead = next === -1 ? 0 : snaps.length - next;
       let others: GameState;
-      if (next === -1) others = snaps[snaps.length - 1]!.state;
+      if (next === -1 && snaps.length >= 2) {
+        // The newest snapshot is late: carry others on along their last motion for a short
+        // while instead of freezing them, then hold. The next snapshot takes over from there.
+        const a = snaps[snaps.length - 2]!;
+        const b = snaps[snaps.length - 1]!;
+        const over = Math.min(t - b.serverMs, EXTRAPOLATE_MS);
+        if (over > 0 && b.serverMs > a.serverMs) {
+          stats.extrapolated++;
+          stats.maxExtrapolationMs = Math.max(stats.maxExtrapolationMs, over);
+        }
+        others = othersBlender.blend(a.state, b.state, 1 + Math.max(0, over) / Math.max(1, b.serverMs - a.serverMs), true);
+      } else if (next === -1) others = snaps[snaps.length - 1]!.state;
       else if (next === 0) others = snaps[0]!.state;
       else {
         const a = snaps[next - 1]!;
         const b = snaps[next]!;
         others = othersBlender.blend(a.state, b.state, (t - a.serverMs) / (b.serverMs - a.serverMs));
+      }
+
+      // Round over (banner up) or the two timelines on different rounds: draw only what the
+      // server sent. Prediction runs ahead and resets the round by itself, so mixing the two
+      // here showed the next round's map and spawn under the old banner for a round trip,
+      // then flicked back (the "flicker" at every round or match restart). Nothing moves
+      // under the banner, so nothing is lost by not predicting.
+      if (others.winner !== null || predictor.state.mapId !== others.mapId || predictor.state.match.round !== others.match.round) {
+        correction.x = correction.y = 0;
+        for (const e of serverEvents) events.push(e);
+        serverEvents.length = 0;
+        return { prev: others, curr: others, alpha: 1, events };
       }
 
       // You: the predicted present, between the last two predicted ticks.

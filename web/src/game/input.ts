@@ -25,6 +25,8 @@ export class OneButton {
     const onPointerUp = (e: PointerEvent) => {
       this.pointers.delete(e.pointerId);
     };
+    // Capture lost without a pointerup (element hidden mid-touch, an OS gesture): let go, or
+    // the button would stay held for good and every later tap would be ignored.
     // A chip the keyboard is on (Tab to Leave, Sound, ...) keeps Space/Enter, so it can be
     // pressed without a mouse; the soldier doesn't fire.
     const onChip = (e: Event) => {
@@ -56,6 +58,7 @@ export class OneButton {
     const onContextMenu = (e: Event) => e.preventDefault();
 
     target.addEventListener("pointerdown", onPointerDown);
+    target.addEventListener("lostpointercapture", onPointerUp);
     target.addEventListener("contextmenu", onContextMenu);
     window.addEventListener("pointerup", onPointerUp);
     window.addEventListener("pointercancel", onPointerUp);
@@ -65,6 +68,7 @@ export class OneButton {
     window.addEventListener("blur", releaseAll);
     this.cleanup.push(() => {
       target.removeEventListener("pointerdown", onPointerDown);
+      target.removeEventListener("lostpointercapture", onPointerUp);
       target.removeEventListener("contextmenu", onContextMenu);
       window.removeEventListener("pointerup", onPointerUp);
       window.removeEventListener("pointercancel", onPointerUp);
@@ -90,10 +94,11 @@ export class OneButton {
     this.cleanup.forEach((fn) => fn());
   }
 
+  // Every new finger, click or key press is a tap, even while another finger is still down
+  // (two thumbs spraying fast overlap; ignoring the second lost up to 40% of their taps).
   private press(apply: () => void): void {
-    const wasHeld = this.held;
     apply();
-    if (!wasHeld) this.pressedSinceTick = true;
+    this.pressedSinceTick = true;
   }
 }
 

@@ -6,7 +6,9 @@ export const TILE = 40;
 
 // One-button control: every press fires and flips the spin direction;
 // keeping it held for holdMs drives forward.
-export const DEFAULT_HOLD_MS = 60;
+// 100, not 60: a normal finger tap lasts 30-90 ms and mouse clicks and Space up to ~100 ms,
+// and with 60 a fast spray kept turning into short walks that froze the fan into one line.
+export const DEFAULT_HOLD_MS = 100;
 export const MIN_HOLD_MS = 30;
 export const MAX_HOLD_MS = 250;
 
@@ -45,10 +47,13 @@ export const SPIN_SPEED = Math.PI * 1.29; // rad/s while not driving
 // After each press the tank holds its heading this long before spinning the other way,
 // so rapid tapping keeps the barrel wobbling around one line instead of sweeping.
 export const SPIN_PAUSE_MS = 60;
-// A press this soon after the previous one fires along the previous shot's heading
-// (the barrel snaps back), so rapid tapping fires in one straight line. 0 disables it:
-// shots then follow the wobbling gun and fan out a little, as in the original.
-export const RAPID_FIRE_MS = 0;
+// Spraying: a shot this soon after the previous one belongs to the same burst. It follows
+// the wobbling gun, so the burst fans out like the original's, but never more than
+// RAPID_FIRE_WOBBLE from the burst's first shot, so uneven tapping can't make it creep
+// sideways. A wobble of 0 snaps every burst shot onto one straight line; RAPID_FIRE_MS 0
+// turns bursts off (every shot goes where the gun points).
+export const RAPID_FIRE_MS = 250;
+export const RAPID_FIRE_WOBBLE = (12 * Math.PI) / 180; // radians either side
 export const DRIVE_SPEED = 186; // px/s, full walking speed
 // Walking starts at DRIVE_START of full speed and reaches full speed after DRIVE_RAMP_MS.
 export const DRIVE_START = 0.5;
@@ -58,8 +63,9 @@ export const BULLET_SPEED = 620; // px/s
 export const BULLET_RADIUS = 4;
 export const BULLET_RANGE = 410; // px travelled before the bullet drops
 export const BULLET_FADE = 80; // last px of range drawn fading out
-// Shorter than a fast double tap, so every real tap fires; only stops input bounce.
-export const FIRE_COOLDOWN_MS = 100;
+// Only stops input bounce: well under the original's ~10 taps/s (100 ms apart), so every
+// real spray tap fires. At 100 it equalled that gap and dropped a quarter of real taps.
+export const FIRE_COOLDOWN_MS = 66; // 4 ticks
 // Off (players' call, 5 Nov 2026): a 6-round magazine that reloads one round at a time, so
 // you can't spray forever. The original never runs dry; set true for that.
 export const UNLIMITED_AMMO = false;

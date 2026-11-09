@@ -96,6 +96,13 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
   bullets or lasts 10 s (was every bullet for 14 s), so a shielded carrier can be stopped.
 - Smaller flags and bases (5 Nov 2026): `FLAG_RADIUS` 10 → 6, `BASE_RADIUS` 34 → 20; you take a
   flag by reaching it and score by standing on your stand, and both are drawn at those sizes.
+- Spray, flicker and lag (9 Nov 2026): fast tapping fires every tap (bounce guard 100 → 66 ms),
+  taps that can't fire don't flip the gun, bursts stay within 12° of their first shot, a finger
+  tap never walks (hold 60 → 100 ms), dry click on an empty magazine, second-finger taps count.
+  No more flicker at round and match restarts (frames drawn from the server state while a
+  round is over). Other players carry on through a late snapshot for up to 120 ms. Server input
+  buffer adapts to each player's jitter and never loses a tap. Docker tests show Render Free
+  (~0.1 CPU) can't keep 60 Hz; at 0.5 CPU the game is smooth (see docs/NETCODE.md).
 - Crates stay solid (5 Nov 2026, players' call): `CRATE_BREAKS` off so crates can be pushed to
   block lanes. Desks and beds never break either.
 - New look (5 Nov 2026): every sprite redrawn in a top-down cartoon style with dark outlines

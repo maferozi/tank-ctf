@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  DEFAULT_HOLD_MS,
+  FIRE_COOLDOWN_MS,
+  RAPID_FIRE_WOBBLE,
   BED_MASS,
   BED_SIZE,
   BODY_MASS,
@@ -143,6 +146,107 @@ test("rapid tapping fans shots out a little around one line", () => {
   }
   const spread = deg(Math.max(...angles) - Math.min(...angles));
   assert.ok(spread < 20, `burst should stay aimed one way, spread ${spread.toFixed(1)} degrees`);
+});
+
+// Sprays a tap after each gap (in ticks), refilling the magazine so only the aim is tested.
+// Returns each shot's heading in degrees relative to the first shot, and the taps that fired.
+function spray(gaps: number[], pressTicks = 2) {
+  const state = createState();
+  const tank = addTank(state, map, "p1", "red");
+  tank.x = 540;
+  tank.y = 380;
+  tank.angle = Math.PI;
+  const headings: number[] = [];
+  let fired = 0;
+  const run = (input: TankInput) => {
+    tank.ammo = MAX_AMMO;
+    step(state, map, { p1: input }, { holdMs: DEFAULT_HOLD_MS });
+    for (const e of state.events) if (e.type === "fire") {
+      fired++;
+      const b = state.bullets.at(-1)!;
+      headings.push(Math.atan2(b.vy, b.vx));
+    }
+  };
+  for (const gap of gaps) {
+    run({ held: true, pressed: true });
+    for (let i = 1; i < pressTicks; i++) run(down);
+    for (let i = pressTicks; i < gap; i++) run(up);
+  }
+  const deg = headings.map((h) => {
+    let d = h - headings[0]!;
+    d -= Math.round(d / (Math.PI * 2)) * Math.PI * 2;
+    return (d * 180) / Math.PI;
+  });
+  return { fired, deg, tank };
+}
+
+test("a fast spray with uneven finger timing fires every tap and stays aimed one way", () => {
+  // ~10 taps/s with real timing spread: gaps of 5, 6 and 7 ticks (83-117 ms).
+  const gaps = [6, 5, 7, 6, 6, 5, 7, 5, 6, 7, 6, 5, 6, 7, 5, 6];
+  const { fired, deg } = spray(gaps);
+  assert.equal(fired, gaps.length, "every tap fires (the cooldown is only a bounce guard)");
+  const limit = (RAPID_FIRE_WOBBLE * 180) / Math.PI + 1e-6;
+  for (const d of deg) assert.ok(Math.abs(d) <= limit, `shot ${d.toFixed(1)} deg off the burst's line`);
+  const spread = Math.max(...deg) - Math.min(...deg);
+  assert.ok(spread > 3, `the burst still fans out (${spread.toFixed(1)} deg)`);
+});
+
+test("a steady 8 taps/s spray doesn't sweep to one side", () => {
+  const gaps = Array.from({ length: 16 }, (_, i) => (i % 2 === 0 ? 7 : 8)); // 125 ms average
+  const { deg } = spray(gaps);
+  const limit = (RAPID_FIRE_WOBBLE * 180) / Math.PI + 1e-6;
+  assert.ok(Math.max(...deg.map(Math.abs)) <= limit, `swept ${Math.max(...deg.map(Math.abs)).toFixed(1)} deg`);
+});
+
+test("a tap the cooldown stops doesn't fire and doesn't flip the spin", () => {
+  const state = createState();
+  const tank = addTank(state, map, "p1", "red");
+  step(state, map, { p1: tap }, config);
+  const dir = tank.spinDir;
+  assert.ok(tank.cooldownMs > 0 && tank.cooldownMs <= FIRE_COOLDOWN_MS);
+  step(state, map, { p1: tap }, config);
+  assert.ok(!state.events.some((e) => e.type === "fire"));
+  assert.equal(tank.spinDir, dir, "spin direction unchanged");
+});
+
+test("a tap with an empty magazine clicks, doesn't fire and doesn't flip the spin", { skip: UNLIMITED_AMMO && "UNLIMITED_AMMO is on" }, () => {
+  const state = createState();
+  const tank = addTank(state, map, "p1", "red");
+  tank.ammo = 0;
+  const dir = tank.spinDir;
+  step(state, map, { p1: tap }, config);
+  assert.deepEqual(state.events.map((e) => e.type), ["dry"]);
+  assert.equal(tank.spinDir, dir);
+});
+
+test("a normal finger tap (up to 90 ms) never starts walking", () => {
+  for (const pressTicks of [2, 3, 4, 5]) {
+    const { tank } = spray([12, 12, 12], pressTicks);
+    assert.equal(tank.x, 540, `a ${pressTicks}-tick tap walked`);
+  }
+});
+
+test("while the button is held the heading stays put, so a hold walks where you pressed", () => {
+  const state = createState();
+  const tank = addTank(state, map, "p1", "red");
+  tank.x = 540;
+  tank.y = 380;
+  tank.angle = 1;
+  step(state, map, { p1: { held: true, pressed: true } }, { holdMs: DEFAULT_HOLD_MS });
+  const pressedAt = tank.angle;
+  for (let i = 0; i < 30; i++) step(state, map, { p1: down }, { holdMs: DEFAULT_HOLD_MS });
+  assert.ok(tank.driving);
+  assert.equal(tank.angle, pressedAt);
+});
+
+test("stale input (the server ran out of samples) doesn't turn a tap into a walk", () => {
+  const state = createState();
+  const tank = addTank(state, map, "p1", "red");
+  const x = tank.x;
+  step(state, map, { p1: { held: true, pressed: true } }, config);
+  for (let i = 0; i < 20; i++) step(state, map, { p1: { held: true, pressed: false, stale: true } }, config);
+  assert.equal(tank.driving, false);
+  assert.equal(tank.x, x);
 });
 
 test("a tap after a pause aims at the current heading, not the old line", () => {
