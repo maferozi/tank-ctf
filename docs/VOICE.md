@@ -7,6 +7,13 @@ Open-mic voice chat between players, built into the room. Added 5 Nov 2026.
 - **Match:** you only hear your own team. When the match starts, voice connections to the other
   team are hung up; when everyone is back in the lobby they connect again. All of this happens
   by itself whenever the phase or the teams change.
+- **Sharing with the other team (each player's own choice):** the chip next to the mic says
+  **Team only** (default) or **Both teams**. With Both teams, the other team hears you during
+  the match too. It's one way: sharing your voice never lets you hear an enemy who didn't
+  share theirs (your browser sends that enemy silence, theirs sends you nothing), and two
+  players who both share talk both ways. It can be switched any time, also mid-match
+  (`Player.shareVoice`, `MSG.shareVoice`; rules `canHear` / `canVoice` in `shared/src/voice.ts`;
+  the server relays signaling only where either side may hear the other).
 - A player whose connection dropped (shown as "away") is left out until they are back.
 
 ## How it works

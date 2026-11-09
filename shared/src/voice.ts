@@ -63,24 +63,38 @@ export const VOICE_CONFIG_PER_SECOND = 0.1;
 // Speech-tuned Opus: mono, at most this many bits per second.
 export const VOICE_MAX_BITRATE = 28_000;
 
-// Who can hear whom: in the lobby everyone in the room, during a match only your own team.
-// null if the player isn't in the room.
-export function voiceGroup(roster: Pick<Roster, "players" | "phase">, playerId: string): string | null {
+type VoiceRoster = Pick<Roster, "players" | "phase">;
+
+// Voice groups: in the lobby everyone in the room, during a match each team. null if the
+// player isn't in the room.
+export function voiceGroup(roster: VoiceRoster, playerId: string): string | null {
   const player = roster.players.find((p) => p.id === playerId);
   if (!player) return null;
   return roster.phase === "lobby" ? "room" : player.team;
 }
 
-// May `a` and `b` talk to each other right now? (The server's relay rule.)
-export function canVoice(roster: Pick<Roster, "players" | "phase">, a: string, b: string): boolean {
-  if (a === b) return false;
-  const group = voiceGroup(roster, a);
-  return group !== null && group === voiceGroup(roster, b);
+// May `speaker`'s voice reach `listener`? Always within their group; across teams in a match
+// only if the speaker chose to share their voice (Player.shareVoice). One way: sharing your
+// voice never lets you hear an enemy who didn't share theirs.
+export function canHear(roster: VoiceRoster, listener: string, speaker: string): boolean {
+  if (listener === speaker) return false;
+  const group = voiceGroup(roster, listener);
+  if (group === null) return false;
+  const other = voiceGroup(roster, speaker);
+  if (other === null) return false;
+  if (group === other) return true;
+  return roster.players.find((p) => p.id === speaker)?.shareVoice === true;
+}
+
+// Do `a` and `b` need a voice connection (either can hear the other)? The server's relay
+// rule. Each side then sends its mic only where canHear allows.
+export function canVoice(roster: VoiceRoster, a: string, b: string): boolean {
+  return canHear(roster, a, b) || canHear(roster, b, a);
 }
 
 // Everyone `me` should have a voice connection with, sorted by id. Away players (dropped,
 // seat held) are left out until they are back.
-export function voicePeers(roster: Pick<Roster, "players" | "phase">, me: string): string[] {
+export function voicePeers(roster: VoiceRoster, me: string): string[] {
   return roster.players
     .filter((p) => !p.away && canVoice(roster, me, p.id))
     .map((p) => p.id)

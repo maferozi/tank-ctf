@@ -228,21 +228,22 @@ export const splatSprite = perTeam((team) => {
 });
 
 // Ring under your own soldier so you find yourself at a glance.
+// Marks your own soldier: a thin dashed ring just outside the body (TANK_RADIUS), so it
+// shows which one is you without making you look bigger than you are.
 export const youRingSprite = perTeam((team) => {
   const c = TEAM[team];
-  return makeSprite(52, 52, 26, 26, (g) => {
-    const fill = g.createRadialGradient(0, 0, 10, 0, 0, 22);
-    fill.addColorStop(0, "rgba(255, 255, 255, 0)");
-    fill.addColorStop(1, c.glow);
-    g.fillStyle = fill;
+  const r = TANK_RADIUS + 4;
+  return makeSprite(2 * r + 6, 2 * r + 6, r + 3, r + 3, (g) => {
+    g.strokeStyle = c.glow;
+    g.lineWidth = 3;
     g.beginPath();
-    g.arc(0, 0, 22, 0, Math.PI * 2);
-    g.fill();
-    g.strokeStyle = "rgba(255, 255, 255, 0.95)";
-    g.lineWidth = 2.2;
-    g.setLineDash([6, 4]);
+    g.arc(0, 0, r, 0, Math.PI * 2);
+    g.stroke();
+    g.strokeStyle = "rgba(255, 255, 255, 0.85)";
+    g.lineWidth = 1.4;
+    g.setLineDash([5, 4]);
     g.beginPath();
-    g.arc(0, 0, 20, 0, Math.PI * 2);
+    g.arc(0, 0, r, 0, Math.PI * 2);
     g.stroke();
   });
 });
@@ -364,13 +365,39 @@ export const flashSprite = lazy(() =>
 
 const SHADOW = "rgba(10, 14, 30, 0.22)";
 
+// Blocks (crates, desks, beds, power boxes) can be turned by pushes, so their soft shadow is a
+// sprite of its own: the renderer turns it with the block but keeps it offset down-right, the
+// way the light falls. Cached per shape.
+export interface BlockShadow {
+  sprite: Sprite;
+  dx: number; // offset from the block's centre, in map pixels
+  dy: number;
+}
+const blockShadows = new Map<string, BlockShadow>();
+export function blockShadowSprite(size: number, radius: number, dx: number, dy: number): BlockShadow {
+  const key = `${size}/${radius}/${dx}/${dy}`;
+  let shadow = blockShadows.get(key);
+  if (!shadow) {
+    const h = size / 2;
+    const sprite = makeSprite(size + 4, size + 4, h + 2, h + 2, (g) => {
+      rrect(g, -h, -h, size, size, radius);
+      g.fillStyle = SHADOW;
+      g.fill();
+    });
+    blockShadows.set(key, (shadow = { sprite, dx, dy }));
+  }
+  return shadow;
+}
+export const crateShadow = lazy(() => blockShadowSprite(CRATE_SIZE, 4, 3, 4));
+export const deskShadow = lazy(() => blockShadowSprite(DESK_SIZE, 4, 3, 4));
+export const bedShadow = lazy(() => blockShadowSprite(BED_SIZE, 6, 4, 5));
+export const powerBoxShadow = lazy(() => blockShadowSprite(POWER_BOX_SIZE, 7, 2, 3.5));
+
 // A wooden crate: light frame, dark inside, one diagonal brace, nails in the corners.
+// Its shadow is crateShadow.
 export const crateSprite = lazy(() => {
   const h = CRATE_SIZE / 2;
   return makeSprite(CRATE_SIZE + 10, CRATE_SIZE + 10, h + 4, h + 4, (g) => {
-    rrect(g, -h + 3, -h + 4, CRATE_SIZE, CRATE_SIZE, 4);
-    g.fillStyle = SHADOW;
-    g.fill();
     rrect(g, -h, -h, CRATE_SIZE, CRATE_SIZE, 4);
     inked(g, WOOD.mid, 2.4);
     // Lit top edge, shaded bottom edge of the frame.
@@ -418,13 +445,10 @@ export const crateSprite = lazy(() => {
 });
 
 // An office desk seen from above: a light wooden top with a monitor and papers, and the
-// chair tucked in at the front. The whole square (DESK_SIZE) is solid.
+// chair tucked in at the front. The whole square (DESK_SIZE) is solid. Shadow: deskShadow.
 export const deskSprite = lazy(() => {
   const h = DESK_SIZE / 2;
   return makeSprite(DESK_SIZE + 10, DESK_SIZE + 10, h + 4, h + 4, (g) => {
-    rrect(g, -h + 3, -h + 4, DESK_SIZE, DESK_SIZE, 4);
-    g.fillStyle = SHADOW;
-    g.fill();
     // Chair: a round seat with a backrest, peeking out under the desk.
     rrect(g, -8, 2, 16, 14, 5);
     inked(g, "#4a5878", 2);
@@ -460,12 +484,10 @@ export const deskSprite = lazy(() => {
 });
 
 // A classroom bed: green blanket with quilting and a white pillow strip at the foot.
+// Shadow: bedShadow.
 export const bedSprite = lazy(() => {
   const h = BED_SIZE / 2;
   return makeSprite(BED_SIZE + 12, BED_SIZE + 12, h + 5, h + 5, (g) => {
-    rrect(g, -h + 4, -h + 5, BED_SIZE, BED_SIZE, 6);
-    g.fillStyle = SHADOW;
-    g.fill();
     rrect(g, -h, -h, BED_SIZE, BED_SIZE, 6);
     const blanket = g.createLinearGradient(-h, -h, h, h);
     blanket.addColorStop(0, "#5bd665");
@@ -507,13 +529,10 @@ export const bedSprite = lazy(() => {
   });
 });
 
-// The power-up box: a glossy violet cube with a white "?".
+// The power-up box: a glossy violet cube with a white "?". Shadow: powerBoxShadow.
 export const powerBoxSprite = lazy(() => {
   const h = POWER_BOX_SIZE / 2;
   return makeSprite(POWER_BOX_SIZE + 10, POWER_BOX_SIZE + 10, h + 4, h + 4, (g) => {
-    rrect(g, -h + 2, -h + 3.5, POWER_BOX_SIZE, POWER_BOX_SIZE, 7);
-    g.fillStyle = SHADOW;
-    g.fill();
     rrect(g, -h, -h, POWER_BOX_SIZE, POWER_BOX_SIZE, 7);
     const fill = g.createLinearGradient(0, -h, 0, h);
     fill.addColorStop(0, "#c48bff");

@@ -26,9 +26,10 @@ export class Blender {
     out.tanks = this.list("tanks", a.tanks, b.tanks, t, (x) => x.id, (p, x) => p.alive === x.alive && (!map || x.alive), true, map && ((x, y) => circleHitsSolid(map, x, y, TANK_RADIUS)));
     out.bullets = this.list("bullets", a.bullets, b.bullets, t, (x) => x.id, undefined, false, map && ((x, y) => circleHitsWall(map, x, y, BULLET_RADIUS)));
     const still = Math.min(t, 1); // crates, boxes and flags don't guess ahead
-    out.crates = this.list("crates", a.crates, b.crates, still, (x) => x.id);
+    // Pushed blocks also turn (angle), blended the short way round like soldiers.
+    out.crates = this.list("crates", a.crates, b.crates, still, (x) => x.id, undefined, true);
     // A box that just came home must not slide back.
-    out.powerBoxes = this.list("powerBoxes", a.powerBoxes, b.powerBoxes, still, (x) => x.id, (p, x) => p.respawnMs <= 0 && x.respawnMs <= 0);
+    out.powerBoxes = this.list("powerBoxes", a.powerBoxes, b.powerBoxes, still, (x) => x.id, (p, x) => p.respawnMs <= 0 && x.respawnMs <= 0, true);
     // Carried flags are drawn on their carrier; a flag sent home must not slide back.
     out.flags = this.list("flags", a.flags, b.flags, still, (x) => x.team, (p, x) => p.atHome === x.atHome);
     return this.out;

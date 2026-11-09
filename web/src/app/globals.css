@@ -1686,6 +1686,21 @@ button.round-slot[aria-checked="true"] {
   color: #5dffa0;
 }
 
+/* Who hears you in the match: team only (quiet) or both teams (amber, so it's noticed). */
+.share-chip {
+  color: var(--muted);
+}
+
+.share-chip.on {
+  color: #ffc94d;
+  border-color: rgba(255, 201, 77, 0.55);
+}
+
+.lobby-mic {
+  display: flex;
+  gap: 8px;
+}
+
 .mic-chip.talking {
   box-shadow:
     0 0 0 2px rgba(93, 255, 160, 0.75),

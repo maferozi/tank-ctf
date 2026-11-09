@@ -2,12 +2,13 @@
 
 import { canStart, type Roster, type Team } from "@tank/shared";
 import { Icon } from "./Icon";
-import { MicChip, useVoice } from "./MicChip";
+import { MicChip, ShareChip, useVoice } from "./MicChip";
 import { RoundMaps } from "./MapPicker";
 import { RoomCode } from "./RoomChip";
 import type { Session } from "./session";
 
 const TEAM_NAME: Record<Team, string> = { red: "Red", blue: "Blue" };
+
 const other = (team: Team): Team => (team === "red" ? "blue" : "red");
 
 // Before a match: both teams side by side. Anyone can switch their own team; the host
@@ -24,6 +25,7 @@ export function Lobby({ session, roster, code, onLeave }: { session: Session; ro
     <main className="home lobby">
       <div className="lobby-mic">
         <MicChip voice={voice} />
+        <ShareChip voice={voice} />
       </div>
       <RoomCode code={code} />
       <section className="panel match-info">

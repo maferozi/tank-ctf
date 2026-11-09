@@ -12,7 +12,9 @@ export const DEFAULT_HOLD_MS = 100;
 export const MIN_HOLD_MS = 30;
 export const MAX_HOLD_MS = 250;
 
-export const TANK_RADIUS = 14;
+// Collision size of a soldier. 12 (was 14) matches the drawn body, so soldiers fit the gaps
+// they look like they fit (players' report: narrow aisles felt blocked).
+export const TANK_RADIUS = 12;
 
 // Weights. When bodies push each other they move together at a speed set by their
 // weights (a light pusher against a heavy body barely moves it).
@@ -36,12 +38,21 @@ export const BED_MASS = 6;
 // loosen like crates, stop bullets and never break.
 export const DESK_SIZE = 34; // px, square
 export const DESK_MASS = 4;
-// A soldier walking into a crate, desk, bed or power box pushes it straight along the face
-// it hits (picked from the walking heading), so it can't skid off sideways. The soldier also
-// grips that face: sideways walking of up to PUSH_GRIP times the forward walking is cancelled
-// (like friction), so walking a little off-axis still pushes straight instead of sliding around
-// the box. Only steeper headings slide along the face.
-export const PUSH_GRIP = 0.6; // grips headings up to ~31 degrees off the face's axis
+// A soldier walking into the face of a crate, desk, bed or power box grips it like friction:
+// sideways walking of up to PUSH_GRIP times the forward walking is cancelled, so walking a
+// little off-axis into the middle of a face pushes it on instead of sliding along the face.
+// The grip fades towards the face's ends (none at a corner), so a soldier pushing near a
+// corner slides towards it as the block turns, swings it round and slips off.
+export const PUSH_GRIP = 0.6; // in the middle of a face: grips headings up to ~31 degrees off
+// Blocks turn when pushed off-centre, like real furniture. Each tick a push that moves a block
+// by d at a point r from its centre turns it by BLOCK_TURN * (r x d) / half^2 radians
+// (half = half its size): nothing through the centre, most at a corner. d already shrinks with
+// weight and half^2 grows with size, so heavy, big blocks turn less. Walking into a crate near
+// its corner turns it about 30 degrees in the first second and about 50 by the time the
+// soldier slips off its corner; a bed turns about 19 degrees in that first second. Blocks never
+// spin on their own: no push, no turn.
+export const BLOCK_TURN = 1;
+export const BLOCK_MAX_TURN = 0.06; // rad per push, at most (about 3.4 degrees)
 // Measured from the original (docs/ORIGINAL.md): one full turn in 1.555 s.
 export const SPIN_SPEED = Math.PI * 1.29; // rad/s while not driving
 // After each press the tank holds its heading this long before spinning the other way,
@@ -82,10 +93,10 @@ export const HIT_KNOCKBACK = 70; // px/s a bullet gives a standing soldier as th
 // Capture the flag. Each team's flag stands at its base. An enemy who touches it carries
 // it; carrying it into their own base wins the round.
 // Both are small so it only happens when the soldier visibly reaches the flag or the stand:
-// touching a flag needs the soldier's edge to reach the flag pole's cloth (6 px), and scoring
-// needs the carrier's centre within 20 px of the stand's centre, i.e. standing on the stand
-// (the soldier's body, 14 px, then covers the stand's middle).
-export const FLAG_RADIUS = 6; // touching distance is this plus TANK_RADIUS
+// touching a flag needs the soldier's edge to reach the flag (8 px), so the centres are 20 px
+// apart, and scoring needs the carrier's centre within 20 px of the stand's centre, i.e.
+// standing on the stand (the soldier's body, 12 px, then covers the stand's middle).
+export const FLAG_RADIUS = 8; // touching distance is this plus TANK_RADIUS
 export const BASE_RADIUS = 20; // a carrier whose centre is this close to their own flag stand scores
 // Each team's respawn square: 2 x 2 tiles. Soldiers start each round and respawn on one of
 // its four spots, SPAWN_PAD_SPREAD px from its centre along each axis.
@@ -110,7 +121,10 @@ export const POWER_RESPAWN_MS = POWER_RESPAWN_MAX_MS;
 // A shield stops SHIELD_HITS bullets or lasts SHIELD_MS, whichever runs out first, so a
 // shielded flag carrier can still be brought down by a team that focuses fire.
 export const SHIELD_MS = 10000;
-export const SHIELD_HITS = 3;
+export const SHIELD_HITS = 5; // players' call (9 Nov 2026), was 3
+// Spawn protection: a soldier who just respawned can't be hurt for this long, so nobody is
+// shot the moment they appear on the respawn square.
+export const SPAWN_SHIELD_MS = 2000;
 export const SPEED_MS = 14000;
 export const SPEED_BOOST = 1.6; // drive speed multiplier
 export const FLARE_MS = 14000;

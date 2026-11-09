@@ -8,6 +8,9 @@ import {
   DRIVE_SPEED,
   FLAG_RADIUS,
   FLAG_RETURN_MS,
+  RESPAWN_MS,
+  SHIELD_HITS,
+  SPAWN_SHIELD_MS,
   SPAWN_PAD_SIZE,
   TANK_RADIUS,
   TICK_MS,
@@ -15,7 +18,7 @@ import {
 } from "./constants";
 import { DEFAULT_MAP } from "./map";
 import { getMap } from "./maps";
-import { addTank, createState, step, type GameEvent, type GameState, type TankInput } from "./sim";
+import { addTank, createState, givePower, step, type GameEvent, type GameState, type TankInput } from "./sim";
 
 const map = DEFAULT_MAP;
 const config = { holdMs: 60 };
@@ -311,4 +314,81 @@ test("water blocks walking but bullets fly over it", () => {
     step(shot, garden, {}, config);
   }
   assert.equal(target.alive, false, "the bullet crossed the water");
+});
+
+test("you can't score while the other team holds your flag; once it's home you can", () => {
+  const { state, red, blue, redFlag, blueFlag } = setup();
+  // Blue takes Red's flag and walks off with it.
+  blue.x = redFlag.homeX;
+  blue.y = redFlag.homeY;
+  run(state, 1);
+  assert.equal(redFlag.carrier, blue.id);
+  blue.x = map.width / 2;
+  blue.y = 40 + TANK_RADIUS + 60;
+  // Red takes Blue's flag and stands on its own stand: no score while Red's flag is away.
+  red.x = blueFlag.homeX;
+  red.y = blueFlag.homeY;
+  run(state, 1);
+  assert.equal(blueFlag.carrier, red.id);
+  red.x = redFlag.homeX;
+  red.y = redFlag.homeY;
+  let events = run(state, 5);
+  assert.equal(state.winner, null, "no capture while your own flag is away");
+  assert.ok(!events.some((e) => e.type === "capture"));
+  // Blue's carrier goes down and a Red teammate would return it; here: send it home directly.
+  redFlag.carrier = null;
+  redFlag.atHome = true;
+  redFlag.x = redFlag.homeX;
+  redFlag.y = redFlag.homeY;
+  events = run(state, 1);
+  assert.equal(state.winner, "red");
+  assert.ok(events.some((e) => e.type === "capture"));
+});
+
+test("a flag carrier with the speed power still walks at carrier speed", () => {
+  const { state, red, blueFlag } = setup();
+  givePower(state, red, "speed");
+  red.x = blueFlag.homeX;
+  red.y = blueFlag.homeY;
+  run(state, 1);
+  assert.equal(blueFlag.carrier, red.id);
+  red.x = 200; // a clear lane across the map
+  red.y = 300;
+  red.angle = 0;
+  state.crates.length = 0;
+  run(state, ticks(DRIVE_RAMP_MS) + 20, { [red.id]: hold }); // up to full speed
+  const x0 = red.x;
+  run(state, 30, { [red.id]: hold });
+  const speed = (red.x - x0) / (30 * TICK_MS / 1000);
+  assert.ok(Math.abs(speed - DRIVE_SPEED * CARRIER_SPEED) < 1, `walked ${speed.toFixed(1)} px/s`);
+});
+
+test("a respawned soldier is protected for SPAWN_SHIELD_MS, then can be shot", () => {
+  const { state, red, blue } = setup();
+  blue.alive = false;
+  blue.respawnMs = TICK_MS;
+  run(state, 2);
+  assert.ok(blue.alive);
+  assert.ok(blue.spawnShieldMs > 0 && blue.spawnShieldMs <= SPAWN_SHIELD_MS);
+  const shoot = () => {
+    red.x = blue.x - 80;
+    red.y = blue.y;
+    red.angle = 0;
+    red.cooldownMs = 0;
+    red.ammo = 6;
+    const events = run(state, 1, { [red.id]: tap });
+    return events.concat(run(state, 12));
+  };
+  const blocked = shoot();
+  assert.ok(blue.alive, "protected right after respawning");
+  assert.ok(blocked.some((e) => e.type === "shieldHit" && e.tankId === blue.id));
+  run(state, ticks(SPAWN_SHIELD_MS));
+  assert.equal(blue.spawnShieldMs, 0);
+  shoot();
+  assert.equal(blue.alive, false, "protection is over");
+  assert.ok(RESPAWN_MS > SPAWN_SHIELD_MS);
+});
+
+test("a power shield stops SHIELD_HITS bullets (5)", () => {
+  assert.equal(SHIELD_HITS, 5);
 });

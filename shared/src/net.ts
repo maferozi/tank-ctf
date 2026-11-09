@@ -21,6 +21,7 @@ export const MSG = {
   team: "team", // client -> server: TeamMessage, switch your own team
   move: "move", // host -> server: MoveMessage, put another player on a team
   start: "start", // host -> server: start the match
+  shareVoice: "shareVoice", // client -> server: ShareVoiceMessage, your own choice, any time
   // client -> server: "send me a full snapshot", when a delta doesn't fit what it has.
   keyframe: "key",
   // Voice chat signaling (see voice.ts and docs/VOICE.md). Both ways: VoiceMessage. The
@@ -37,6 +38,10 @@ export type RoomPhase = "lobby" | "playing";
 
 export interface TeamMessage {
   team: Team;
+}
+
+export interface ShareVoiceMessage {
+  on: boolean;
 }
 
 export interface MoveMessage {
@@ -84,6 +89,9 @@ export interface Player {
   name: string;
   team: Team;
   away: boolean; // connection dropped; their seat is held for RECONNECT_SECONDS
+  // This player chose to let the other team hear them during the match (their own choice,
+  // off by default: in a match your voice only goes to your own team).
+  shareVoice: boolean;
 }
 
 // Everything about the room except the game itself, sent on every change.

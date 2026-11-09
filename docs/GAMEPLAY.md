@@ -33,7 +33,8 @@ while the first is still down counts as a tap too.
   next round. Desks, beds and power boxes never break. Every press fires first, so walking straight
   at a crate in range breaks it; a crate still gets shoved when you bump into it from the side.
 - One hit kills, unless the target has a shield (see power-ups). Respawn after `RESPAWN_MS` (8 s) on your
-  team's respawn square; the body lies where it fell until then.
+  team's respawn square; the body lies where it fell until then. A soldier who just respawned
+  can't be hurt for `SPAWN_SHIELD_MS` (2 s): a faint blinking bubble, bullets stop on it.
 - A fallen body is cover for its own team: it stops the other team's bullets until that soldier
   respawns. Teammates' bullets pass straight through it. Bodies are solid and can be pushed (see
   weights below), and the cover moves with them.
@@ -53,7 +54,7 @@ while the first is still down counts as a tap too.
   inside `FLAG_RADIUS` (6 px), so what you see is what counts.
 - Touch the enemy flag to pick it up: your centre within `TANK_RADIUS` + `FLAG_RADIUS` (20 px)
   of it, so your body has to reach the flag itself, not just pass near it. It rides on your back.
-  Carriers walk at `CARRIER_SPEED` (0.8×).
+  Carriers walk at `CARRIER_SPEED` (0.8×), with or without the speed power.
 - Carry it home to win the round: your centre within `BASE_RADIUS` (20 px) of your own flag
   stand, i.e. standing on the stand. The respawn square doesn't count. A "RED WINS" / "BLUE WINS" banner shows,
   everything freezes, and after `ROUND_RESTART_MS` (6 s) a fresh round starts: everyone back on
@@ -61,8 +62,9 @@ while the first is still down counts as a tap too.
 - Shoot the carrier and the flag drops where they fall. An enemy can grab it again; one of its
   own team touching it sends it home. Left alone it goes home after `FLAG_RETURN_MS` (15 s),
   shown by a ring that empties around it.
-- Your own flag at home can't be picked up by your team. Scoring doesn't require your own flag
-  to be home.
+- Your own flag at home can't be picked up by your team. You can only score while your own
+  flag is home: if the other team holds yours, get it back first (shoot their carrier, then
+  touch your dropped flag).
 
 ## Match types
 Picked by whoever creates the room (home page → Match). The join page shows it.
@@ -101,15 +103,34 @@ starts slow then slides at about 47 px/s. A desk (`DESK_SIZE` 34 px, one tile) s
 bed next to it pushes both, so packed rows barely move. Walls never move; whatever a wall blocks
 pushes back on the pusher.
 
-**Pushing goes straight.** Walking into a crate, desk, bed or (with a power) a power box pushes
-it straight along the face you walk into, picked from your heading, even when you hit it off
-centre near a corner (up to half the box plus half your radius off its centre line). It no
-longer skids sideways or spins you round its corner. While pushing you grip the face like
-friction: sideways walking up to `PUSH_GRIP` (0.6) times the forward walking is cancelled, so a
-heading up to about 31° off the face still pushes straight and you stay behind the box. Steeper
-headings slide along the face, and a soldier who only clips a corner glances off as before.
-Standing beside a corner (your centre past the face's edge) and walking away from the box, you
-are not gripped: you slip past the corner instead of sticking to it or dragging the box.
+**Blocks turn like real furniture.** Crates, desks, beds and solid power boxes have an angle
+(every map starts them square, angle 0) and turn when pushed off-centre, so beds and desks end
+up tilted after a shove, as in the original:
+
+- Push the middle of a face and the block goes straight, without turning.
+- Push near a corner and it moves *and* turns: it swings round and slides off at an angle. Each
+  tick a push that moves the block by *d* at a point *r* from its centre turns it by
+  `BLOCK_TURN` (1) × (*r* × *d*) / half-size² radians, at most `BLOCK_MAX_TURN` (0.06 rad,
+  about 3.4°) per push. Through the centre that is 0; at a corner it is largest.
+- Heavier and bigger blocks turn less: *d* already shrinks with weight (the table above), and
+  the half-size² grows with size. Walking into a crate 2 px from its corner turns it about
+  30° in the first second and about 50° by the time you slip off its corner; a bed pushed at
+  the same spot turns about 19° in that first second.
+- Blocks never spin on their own: no push, no turn. There is no spin carried between ticks.
+- Chains work the same way: a bed pushed off-centre into the next bed turns it too. Blocks,
+  soldiers and walls never overlap.
+- Walls: a block never goes into a wall or water, and never turns into one. A tilted block
+  pushed against a wall is pushed back where its corner touches, so it turns flat against the
+  wall.
+- Bullets stop on the block's real (turned) shape.
+
+**Grip.** Walking into the middle of a face you grip it like friction: sideways walking up to
+`PUSH_GRIP` (0.6) times the forward walking is cancelled, so a heading up to about 31° off the
+face still pushes it straight and you stay behind it. The grip fades towards the face's ends
+(none at a corner), so pushing near a corner you slide towards it as the block turns, swing it
+round and slip off. Steeper headings slide along the face, and a soldier who only clips a corner
+glances off. Standing beside a corner (your centre past the face's edge) you are not gripped:
+you slip past the corner instead of sticking to it.
 
 ## Power-up boxes
 - Purple "?" boxes. Touch one (walk into it) to get a random power; shooting it does nothing.
@@ -124,7 +145,7 @@ are not gripped: you slip past the corner instead of sticking to it or dragging 
 
 | Power | Effect | Lasts |
 |---|---|---|
-| Shield | Stops `SHIELD_HITS` (3) bullets. The bubble shows the hits left as 3 segments; each hit sparks, the last one shatters it, and the next bullet kills. Blinks in the last 2 s. | `SHIELD_MS` 10 s or 3 hits, whichever comes first |
+| Shield | Stops `SHIELD_HITS` (5) bullets. The bubble shows the hits left as 5 segments; each hit sparks, the last one shatters it, and the next bullet kills. Blinks in the last 2 s. | `SHIELD_MS` 10 s or 5 hits, whichever comes first |
 | Speed | Walk at `SPEED_BOOST` 1.6×. | `SPEED_MS` 14 s |
 | Flare | 4 bullets (front, back, left, right) every `FLARE_INTERVAL_MS` 2 s, no ammo used. 7 bursts. | `FLARE_MS` 14 s |
 

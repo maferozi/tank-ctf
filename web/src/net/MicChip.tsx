@@ -42,6 +42,31 @@ const LOOK: Record<ChipState, string> = {
   blocked: "blocked",
 };
 
+// Who hears you in the match: your team only (default), or both teams. Your own choice;
+// it never lets you hear an enemy who didn't share theirs. In the lobby everyone hears
+// everyone anyway, so the chip says what will happen once the match starts.
+export function ShareChip({ voice, compact = false }: { voice: VoiceChat; compact?: boolean }) {
+  useVoice(voice);
+  if (voice.unavailable) return null;
+  const on = voice.sharing;
+  const title = on
+    ? "Both teams hear you in the match. Tap for your team only"
+    : "In the match only your team hears you. Tap to let the other team hear you too";
+  return (
+    <button
+      type="button"
+      className={`chip share-chip${on ? " on" : ""}${compact ? " icon-chip" : ""}`}
+      aria-pressed={on}
+      aria-label={title}
+      title={title}
+      onClick={() => voice.setSharing(!on)}
+    >
+      <Icon name={on ? "people" : "user"} />
+      {!compact && <span>{on ? "Both teams" : "Team only"}</span>}
+    </button>
+  );
+}
+
 // Voice chat chip: mute / unmute (open mic), with the mic's state. In a match it shows
 // only the icon, to keep the game screen clean. The first tap anywhere in the room turns
 // the mic on; that tap also shows a one-time "use headphones" hint under the chip.
