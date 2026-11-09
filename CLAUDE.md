@@ -19,6 +19,9 @@ Read `PLAN.md` (decisions, phases, status) and `docs/GAMEPLAY.md` (rules and num
   floating-point-order-dependent logic outside `step()`.
   `GameScreen` draws frames from either driver (`soloDriver` for `/play`).
 - After changing server or net code, run the server and `npm run smoke -w server`.
+- The live game server is on AWS EC2 (Mumbai) and is NOT auto-deployed: after pushing server,
+  shared or net changes, run `deploy/aws/deploy.sh` (ask first, like a push) and then
+  `SERVER_URL=wss://15-206-64-146.sslip.io npm run smoke -w server`. See PLAN.md, Deployed.
 - Some fields still say "tank" (`Tank`, `TANK_RADIUS`, `addTank`) from before the soldier art.
   The player is drawn as a soldier; the names were kept to avoid churn.
 - TypeScript 7 needs `"types": ["node"]` in tsconfigs that use Node APIs.

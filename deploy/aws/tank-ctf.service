@@ -1,0 +1,21 @@
+# The Colyseus game server. Caddy (HTTPS/WSS on 443) forwards to it on localhost:2567.
+[Unit]
+Description=Tank CTF game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=tank
+WorkingDirectory=/opt/tank-ctf/server
+Environment=NODE_ENV=production
+Environment=PORT=2567
+# Optional secrets (voice chat TURN keys, see docs/VOICE.md), kept outside /opt/tank-ctf so
+# deploys never overwrite them. The leading "-" means the file may be missing.
+EnvironmentFile=-/etc/tank-ctf.env
+# tsx directly rather than `npm start`: npm wants a writable home for its logs.
+ExecStart=/opt/tank-ctf/node_modules/.bin/tsx src/index.ts
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

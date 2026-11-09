@@ -1,0 +1,5 @@
+# HTTPS and secure WebSockets (wss://) for the game server, with an automatic certificate.
+# setup.sh replaces {HOST} with the server's public hostname.
+{HOST} {
+	reverse_proxy localhost:2567
+}
