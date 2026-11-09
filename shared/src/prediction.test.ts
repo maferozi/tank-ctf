@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULT_MAP } from "./map";
 import { SNAPSHOT_EVERY_TICKS } from "./net";
-import { InputQueue, MAX_INPUT_QUEUE, Predictor, TARGET_INPUT_QUEUE, type InputFrame } from "./prediction";
+import { CALM_TICKS, InputQueue, MAX_INPUT_QUEUE, MAX_TARGET_INPUT_QUEUE, Predictor, TARGET_INPUT_QUEUE, type InputFrame } from "./prediction";
 import { addTank, cloneState, createState, step, type GameState, type TankInput } from "./sim";
 
 const map = DEFAULT_MAP;
@@ -18,8 +18,8 @@ test("input queue applies one sample per tick and acks it", () => {
   assert.equal(q.ack, 1);
   assert.deepEqual(q.next(), { held: true, pressed: false });
   assert.equal(q.ack, 2);
-  // Nothing queued: keep the button as it was, ack unchanged.
-  assert.deepEqual(q.next(), { held: true, pressed: false });
+  // Nothing queued: keep the button as it was (marked stale), ack unchanged.
+  assert.deepEqual(q.next(), { held: true, pressed: false, stale: true });
   assert.equal(q.ack, 2);
 });
 
@@ -31,19 +31,19 @@ test("input queue skips malformed frames instead of throwing", () => {
   assert.deepEqual(q.next(), { held: true, pressed: true });
 });
 
-test("a backlog drains back to the target depth, one extra sample per tick, keeping taps", () => {
+test("a backlog drains back to the target depth (plus one of slack), one extra sample per tick, keeping taps", () => {
   const q = new InputQueue();
   const frames: InputFrame[] = [];
   for (let s = 1; s <= MAX_INPUT_QUEUE; s++) frames.push({ seq: s, held: false, pressed: s === 2 });
   q.push(frames);
   let fired = 0;
-  // Net one sample fewer per tick: 6 queued reaches the target of 2 after 4 ticks.
+  // Net one sample fewer per tick until the target plus one sample of slack.
   for (let tick = 0; tick < MAX_INPUT_QUEUE - TARGET_INPUT_QUEUE; tick++) {
     if (q.next().pressed) fired++;
     // A steady client adds one sample per tick.
     q.push([{ seq: MAX_INPUT_QUEUE + 1 + tick, held: false, pressed: false }]);
   }
-  assert.equal(q.length, TARGET_INPUT_QUEUE);
+  assert.equal(q.length, TARGET_INPUT_QUEUE + 1);
   assert.equal(fired, 1, "the tap in the backlog still fires exactly once");
 });
 
@@ -55,7 +55,7 @@ test("input queue ignores duplicates and old samples", () => {
     { seq: 3, held: false, pressed: false },
   ]);
   q.next();
-  assert.deepEqual(q.next(), { held: true, pressed: false }, "only seq 5 was queued");
+  assert.deepEqual(q.next(), { held: true, pressed: false, stale: true }, "only seq 5 was queued");
 });
 
 test("input queue overflow drops old samples but never loses a tap", () => {
@@ -64,6 +64,45 @@ test("input queue overflow drops old samples but never loses a tap", () => {
   for (let s = 2; s <= MAX_INPUT_QUEUE + 3; s++) frames.push({ seq: s, held: false, pressed: false });
   q.push(frames);
   assert.equal(q.next().pressed, true, "the merged-away tap must still fire");
+});
+
+test("draining a backlog of fast taps never merges two taps into one", () => {
+  const q = new InputQueue();
+  // A 10 taps/s spray (a 2-tick tap every 6 ticks) arriving all at once after a stall.
+  const frames: InputFrame[] = [];
+  for (let s = 1; s <= 18; s++) {
+    const k = (s - 1) % 6;
+    frames.push({ seq: s, held: k < 2, pressed: k === 0 });
+  }
+  q.push(frames);
+  let taps = 0;
+  for (let tick = 0; tick < 40; tick++) {
+    if (q.next().pressed) taps++;
+    q.push([{ seq: 19 + tick, held: false, pressed: false }]);
+  }
+  assert.equal(taps, 3, "all three taps in the backlog fire");
+  assert.ok(q.length <= TARGET_INPUT_QUEUE + 1, `drained to ${q.length}`);
+  assert.equal(q.lostPresses, 0);
+});
+
+test("the input buffer deepens when a player's packets run late and shrinks again when calm", () => {
+  const q = new InputQueue();
+  let seq = 0;
+  const sample = () => ({ seq: ++seq, held: false, pressed: false });
+  // Packets arrive in bursts of 4 every 4 ticks (a jittery phone): the buffer runs dry.
+  for (let tick = 0; tick < 60; tick++) {
+    if (tick % 4 === 0) q.push([sample(), sample(), sample(), sample()]);
+    q.next();
+  }
+  assert.ok(q.target > TARGET_INPUT_QUEUE, `deepened to ${q.target}`);
+  assert.ok(q.target <= MAX_TARGET_INPUT_QUEUE);
+  // Then a steady connection: one sample per tick, well buffered.
+  q.push(Array.from({ length: q.target }, sample));
+  for (let tick = 0; tick < CALM_TICKS * MAX_TARGET_INPUT_QUEUE; tick++) {
+    q.push([sample()]);
+    q.next();
+  }
+  assert.equal(q.target, TARGET_INPUT_QUEUE, "back to the smallest depth");
 });
 
 // A tiny network: samples reach the server after `up` ticks, snapshots reach the client

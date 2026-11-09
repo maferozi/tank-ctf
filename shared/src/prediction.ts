@@ -11,19 +11,27 @@ export interface InputFrame extends TankInput {
   seq: number;
 }
 
-// Server side: at most this many samples wait per player (100 ms at 60 Hz). If a client's
-// clock runs fast and the queue grows past it, the oldest samples are merged away.
-export const MAX_INPUT_QUEUE = 6;
-// Samples normally waiting: enough to ride out network jitter. A backlog beyond this (left
-// by a burst of late packets) would otherwise delay that player forever, since samples
-// arrive exactly as fast as they are used, so it is drained one extra sample per tick.
-export const TARGET_INPUT_QUEUE = 2;
+// Server side: samples wait in a small buffer per player so network jitter doesn't starve
+// the sim. Its depth adapts to the player's connection, checked once a second: running dry
+// twice or more in that second adds a sample of depth; never running low takes one away.
+// A deeper buffer only delays how others see you; your own soldier is predicted on screen.
+export const TARGET_INPUT_QUEUE = 2; // starting and smallest depth
+export const MAX_TARGET_INPUT_QUEUE = 8; // ~133 ms: deeper than that a player is just lagging
+export const CALM_TICKS = 60; // the adapting window: 1 s
+const STARVES_TO_GROW = 2; // one stray late packet isn't worth a deeper buffer
+// Hard cap (a client whose clock runs fast, or a burst after a long stall).
+export const MAX_INPUT_QUEUE = 20;
 
 export class InputQueue {
   private queue: InputFrame[] = [];
   private lastQueued = 0;
-  private lastHeld = false; // held state of the last sample applied (or merged away)
+  private lastHeld = false; // held state of the last sample applied (or dropped)
+  private windowTicks = 0;
+  private windowStarves = 0;
+  private windowMin = Infinity; // smallest backlog seen in this window
+  target = TARGET_INPUT_QUEUE; // current depth to keep
   ack = 0; // seq of the last sample applied
+  lostPresses = 0; // taps folded into another tap at the hard cap (should stay 0)
 
   push(frames: readonly InputFrame[]): void {
     for (const f of frames) {
@@ -32,29 +40,58 @@ export class InputQueue {
       this.queue.push({ seq: f.seq, held: f.held === true, pressed: f.pressed === true });
       this.lastQueued = f.seq;
     }
-    while (this.queue.length > MAX_INPUT_QUEUE) this.mergeOldest();
+    while (this.queue.length > MAX_INPUT_QUEUE) this.dropOne(true);
   }
 
-  // The input for this tick. With nothing queued (a late packet), keep the button as it was.
+  // The input for this tick. With nothing queued (a late packet), repeat the button as it
+  // was, marked stale so it doesn't count as holding longer.
   next(): TankInput {
-    if (this.queue.length > TARGET_INPUT_QUEUE) this.mergeOldest();
+    // A backlog beyond the target (left by a burst of late packets) would otherwise delay
+    // this player for good, since samples arrive exactly as fast as they are used. One
+    // sample of slack keeps it from draining and starving in turn.
+    if (this.queue.length > this.target + 1) this.dropOne(false);
+    this.windowMin = Math.min(this.windowMin, this.queue.length);
     const f = this.queue.shift();
-    if (!f) return { held: this.lastHeld, pressed: false };
+    if (!f) this.windowStarves++;
+    if (++this.windowTicks >= CALM_TICKS) this.adapt();
+    if (!f) return { held: this.lastHeld, pressed: false, stale: true };
     this.ack = f.seq;
     this.lastHeld = f.held;
     return { held: f.held, pressed: f.pressed };
+  }
+
+  private adapt(): void {
+    if (this.windowStarves >= STARVES_TO_GROW) this.target = Math.min(MAX_TARGET_INPUT_QUEUE, this.target + 1);
+    else if (this.windowStarves === 0 && this.windowMin >= 2) this.target = Math.max(TARGET_INPUT_QUEUE, this.target - 1);
+    this.windowTicks = this.windowStarves = 0;
+    this.windowMin = Infinity;
   }
 
   get length(): number {
     return this.queue.length;
   }
 
-  // Drop the oldest sample but keep its press, so no tap is ever lost.
-  private mergeOldest(): void {
+  // Removes one waiting sample. It picks one that changes nothing (no tap, no press or
+  // release), so draining never loses a tap or its spin reversal. Only at the hard cap, if
+  // every sample matters, the oldest is folded into the next (`force`).
+  private dropOne(force: boolean): void {
+    let prevHeld = this.lastHeld;
+    for (let i = 0; i < this.queue.length; i++) {
+      const f = this.queue[i]!;
+      if (!f.pressed && f.held === prevHeld) {
+        this.queue.splice(i, 1);
+        return;
+      }
+      prevHeld = f.held;
+    }
+    if (!force) return;
     const dropped = this.queue.shift()!;
     const pressed = dropped.pressed || (dropped.held && !this.lastHeld);
     this.lastHeld = dropped.held;
-    if (pressed) this.queue[0]!.pressed = true;
+    const into = this.queue[0];
+    if (!pressed || !into) return;
+    if (into.pressed) this.lostPresses++;
+    into.pressed = true;
   }
 }
 

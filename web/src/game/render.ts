@@ -223,7 +223,8 @@ function noteRound(curr: GameState): void {
     lastAlive.clear();
     spawns.clear();
     flying.clear();
-    bannerSince = -1;
+    // Not bannerSince: a banner already on screen must not restart its fade and pop when
+    // the map changes behind it. It resets when the winner clears (see render()).
   }
   lastTick = curr.tick;
 }

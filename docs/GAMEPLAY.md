@@ -9,11 +9,14 @@ Turning, walking, bullets, ammo and crates follow measurements of the original g
 | Action | Result |
 |---|---|
 | Nothing pressed | The soldier turns in place (`SPIN_SPEED`, 1.29π rad/s, one turn in 1.55 s), counter-clockwise at first. |
-| Any press | Fires one bullet immediately and reverses the turning direction. The heading then holds still for `SPIN_PAUSE_MS` (60 ms). |
-| Keep holding for `DEFAULT_HOLD_MS` (60 ms) | Walks forward until released: starts at `DRIVE_START` (half) of `DRIVE_SPEED` (186 px/s) and reaches full speed after `DRIVE_RAMP_MS` (0.4 s). Releasing never fires. |
-| Tap quickly | Each shot follows the gun as it wobbles back and forth, so a burst fans out a few degrees around one line. (`RAPID_FIRE_MS` is 0; set it above 0 to snap every quick shot back onto the first one's line.) |
+| Any press | Fires one bullet immediately and reverses the turning direction. The heading holds still while the button is down and for `SPIN_PAUSE_MS` (60 ms) after. |
+| A press that can't fire | Inside the bounce guard or with an empty magazine: no shot and the gun keeps turning the same way (it doesn't reverse). An empty magazine gives a dry click. |
+| Keep holding for `DEFAULT_HOLD_MS` (100 ms) | Walks forward, exactly the way you were facing when you pressed, until released: starts at `DRIVE_START` (half) of `DRIVE_SPEED` (186 px/s) and reaches full speed after `DRIVE_RAMP_MS` (0.4 s). Releasing never fires. A normal finger tap (up to ~90 ms) never walks. |
+| Tap quickly (spray) | Shots less than `RAPID_FIRE_MS` (250 ms) apart are one burst. Each follows the gun as it wobbles back and forth, so the burst fans out like the original's, but never more than `RAPID_FIRE_WOBBLE` (12°) either side of the burst's first shot, so uneven tapping can't make it creep sideways. Wobble 0 would snap every burst shot onto one line. |
 
-Input bounce guard: shots closer than `FIRE_COOLDOWN_MS` (100 ms) don't fire.
+Input bounce guard: shots closer than `FIRE_COOLDOWN_MS` (66 ms, 4 ticks) don't fire. It is well
+under the original's ~10 taps a second, so every real spray tap fires. A second finger tapping
+while the first is still down counts as a tap too.
 
 ## Ammo
 - `MAX_AMMO` = 6 rounds, one back every `RELOAD_MS` (1.5 s), shown as dots under your soldier.

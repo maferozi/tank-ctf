@@ -106,6 +106,38 @@ behind (the smoothing buffer). That is normal for online games and hard to notic
 Measured with the 26 × 18 maps, desks and the new power-up rules in place. The adaptive delay
 has not been measured on a real network or phone yet.
 
+## Results, 9 Nov 2026: server CPU (Docker, 8 bots, heavy fire, 30 s)
+The deployed game server runs on Render Free, which gets about a tenth of a CPU. Reproduced
+with Docker (`--cpus` and `--memory=512m`, node 22), old code (`main`) against the new code:
+
+| Server CPU | Old code: gaps > 100 ms, longest | New code: gaps > 100 ms, longest |
+|---|---|---|
+| 0.1 (Render Free) | 192, 361 ms | 292, 310 ms |
+| 0.5 | 35, 484 ms | **0, 53 ms** (p99 40 ms) |
+| 1 | 0, 57 ms | (0.5 already passes) |
+
+At 0.1 CPU neither version keeps 60 Hz: Node's garbage collection and any burst of work are
+spread over 10 ms slices per 100 ms, so the server stalls for 100-300 ms and other players
+freeze. That can't be fixed in code; the server needs at least half a CPU. With that, the new
+code is smooth.
+
+Client side (all servers): when a snapshot is late, other soldiers and bullets carry on along
+their last motion for up to 120 ms (`EXTRAPOLATE_MS`, `Blender` with `extrapolate`), stopping
+short of walls, instead of freezing; fallen soldiers, crates, boxes and flags hold still.
+`window.__net` counts `extrapolated` frames and `maxExtrapolationMs`.
+
+Input buffer (server): the depth adapts per player, checked every second: running dry twice or
+more adds a sample (up to 8), never running low takes one away (down to 2). Draining a backlog
+never merges two taps, and a tick with no sample is marked stale so it can't turn a tap into a
+walk. Press → shot as others see it: median 34 ms locally (29 ms before the change).
+
+Round restarts: while the server state shows a round as over, or the predicted and server
+states are on different rounds or maps, the whole frame is drawn from the server state.
+Before, prediction reset the round on its own and the screen mixed the next round's map and
+spawn with the old banner for a round trip (the flicker at every round restart). Measured in a
+virtual-time harness over 45 round ends at 100-250 ms ping: mixed frames 351-606 ms before, 0
+after.
+
 ## Possible later improvements
 1. Measure the adaptive delay on the deployed server and a real phone; tune its floor (70 ms)
    and the 2 × p95 margin from that.

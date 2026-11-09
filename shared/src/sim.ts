@@ -30,6 +30,7 @@ import {
   RELOAD_MS,
   RESPAWN_MS,
   RAPID_FIRE_MS,
+  RAPID_FIRE_WOBBLE,
   SHIELD_HITS,
   SHIELD_MS,
   SPEED_BOOST,
@@ -57,8 +58,8 @@ export interface Tank {
   angle: number;
   spinDir: 1 | -1; // flips on every press
   spinPauseMs: number; // heading is held still until this runs out
-  lastPressTick: number;
-  aimAngle: number; // heading of the first shot in the current rapid-fire run
+  lastPressTick: number; // tick of the last press that fired
+  aimAngle: number; // heading of the first shot in the current burst
   held: boolean;
   pressMs: number; // how long the current press has lasted
   driving: boolean; // press has passed holdMs
@@ -123,6 +124,7 @@ export interface PowerBox {
 export type GameEvent =
   | { type: "fire"; tankId: string; x: number; y: number }
   | { type: "drop"; tankId: string; x: number; y: number } // bullet ran out of range
+  | { type: "dry"; tankId: string; x: number; y: number } // pressed with an empty magazine
   | { type: "crateBreak"; tankId: string; x: number; y: number } // tankId = shooter
   | { type: "kill"; tankId: string; by: string; x: number; y: number }
   | { type: "power"; tankId: string; kind: PowerKind; x: number; y: number }
@@ -153,6 +155,9 @@ export interface GameState {
 export interface TankInput {
   held: boolean;
   pressed: boolean;
+  // Not a real sample: the server ran out of this player's input and repeats the last held
+  // state. It doesn't add hold time, so a late packet can't turn a tap into a walk.
+  stale?: boolean;
 }
 
 export interface SimConfig {
@@ -336,22 +341,30 @@ export function step(
     }
     tickPowers(state, tank);
 
-    // Every press fires straight away and reverses the spin.
+    // A press fires straight away and reverses the spin. A press that can't fire (cooldown,
+    // empty magazine) leaves the gun alone: flipping on taps that don't shoot made a fast
+    // spray swing to one side.
     const pressStarted = input.pressed || (input.held && !tank.held);
     if (pressStarted) {
-      const sinceLastPress = (state.tick - tank.lastPressTick) * TICK_MS;
-      if (sinceLastPress <= RAPID_FIRE_MS) tank.angle = tank.aimAngle;
-      else tank.aimAngle = tank.angle;
-      tank.lastPressTick = state.tick;
-      fire(state, tank);
-      tank.spinDir = tank.spinDir === 1 ? -1 : 1;
-      tank.spinPauseMs = SPIN_PAUSE_MS;
+      if (canFire(tank)) {
+        const sinceLastShot = (state.tick - tank.lastPressTick) * TICK_MS;
+        if (sinceLastShot <= RAPID_FIRE_MS) tank.angle = clampAround(tank.angle, tank.aimAngle, RAPID_FIRE_WOBBLE);
+        else tank.aimAngle = tank.angle;
+        tank.lastPressTick = state.tick;
+        fire(state, tank);
+        tank.spinDir = tank.spinDir === 1 ? -1 : 1;
+        tank.spinPauseMs = SPIN_PAUSE_MS;
+      } else if (tank.cooldownMs <= 0) {
+        state.events.push({ type: "dry", tankId: tank.id, x: tank.x, y: tank.y });
+      }
       tank.pressMs = 0;
       tank.driving = false;
     }
 
     if (input.held) {
-      tank.pressMs += TICK_MS;
+      // A stale sample (the server ran out of this player's input) doesn't count as holding
+      // longer: otherwise a short tap held over a late packet turned into a walk.
+      if (!input.stale) tank.pressMs += TICK_MS;
       if (tank.pressMs >= config.holdMs) tank.driving = true;
     } else {
       tank.pressMs = 0;
@@ -366,7 +379,11 @@ export function step(
       shove(tankBody(tank), map, move.x, move.y);
     } else {
       tank.driveMs = 0;
-      if (tank.spinPauseMs > 0) tank.spinPauseMs -= TICK_MS;
+      // While the button is down the heading stays put, so a hold walks exactly where you
+      // pressed (DEFAULT_HOLD_MS is longer than the pause after a shot).
+      if (tank.held) {
+        // holding still
+      } else if (tank.spinPauseMs > 0) tank.spinPauseMs -= TICK_MS;
       else tank.angle = wrapAngle(tank.angle + tank.spinDir * SPIN_SPEED * dt);
     }
   }
@@ -617,8 +634,12 @@ function pushBodies(state: GameState, map: GameMap): void {
   }
 }
 
+function canFire(tank: Tank): boolean {
+  return tank.cooldownMs <= 0 && (UNLIMITED_AMMO || tank.ammo > 0);
+}
+
 function fire(state: GameState, tank: Tank): void {
-  if (tank.cooldownMs > 0 || (!UNLIMITED_AMMO && tank.ammo <= 0)) return;
+  if (!canFire(tank)) return;
   tank.cooldownMs = FIRE_COOLDOWN_MS;
   if (!UNLIMITED_AMMO) tank.ammo--;
   spawnBullet(state, tank, tank.angle);
@@ -700,6 +721,13 @@ function stepBullets(state: GameState, map: GameMap, dt: number): void {
     }
     return true;
   });
+}
+
+// `a` moved to within `max` of `center` (the short way round), wrapped to 0..2π.
+function clampAround(a: number, center: number, max: number): number {
+  let d = a - center;
+  d -= Math.round(d / (Math.PI * 2)) * Math.PI * 2; // -π..π
+  return wrapAngle(center + Math.max(-max, Math.min(max, d)));
 }
 
 export function wrapAngle(a: number): number {

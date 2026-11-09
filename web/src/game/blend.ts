@@ -1,4 +1,4 @@
-import { copyInto, type GameState, type Tank } from "@tank/shared";
+import { BULLET_RADIUS, TANK_RADIUS, circleHitsSolid, circleHitsWall, copyInto, getMap, type GameMap, type GameState, type Tank } from "@tank/shared";
 
 interface Movable {
   x: number;
@@ -6,7 +6,9 @@ interface Movable {
 }
 
 // Blends two game states (matched by id) into one, t = 0..1. Things only in `b` are taken
-// as they are. Used by the online driver, which mixes states from different timelines.
+// as they are. With `extrapolate`, t may go past 1: living soldiers and bullets carry on the
+// way they were going (stopping short of walls), everything else stays as in `b`. The online
+// driver uses that for a late snapshot, so others don't freeze. Used by the online driver, which mixes states from different timelines.
 // It runs every frame, so it reuses its output: the state it returns (and the blended
 // objects in it) are only valid until the next call. Unchanged objects are `b`'s own.
 export class Blender {
@@ -15,18 +17,20 @@ export class Blender {
   private pools = new Map<string, Movable[]>(); // blended objects, per field and slot
   private byKey = new Map<unknown, Movable>();
 
-  blend(a: GameState, b: GameState, t: number): GameState {
-    if (a === b || t >= 1) return b;
+  blend(a: GameState, b: GameState, t: number, extrapolate = false): GameState {
+    if (a === b || (t >= 1 && !extrapolate) || t === 1) return b;
+    const map = t > 1 ? getMap(b.mapId) : null;
     const out = this.out as unknown as Record<string, unknown>;
     for (const k in b) out[k] = (b as unknown as Record<string, unknown>)[k];
     // Don't slide across the map when someone respawns.
-    out.tanks = this.list("tanks", a.tanks, b.tanks, t, (x) => x.id, (p, x) => p.alive === x.alive, true);
-    out.bullets = this.list("bullets", a.bullets, b.bullets, t, (x) => x.id);
-    out.crates = this.list("crates", a.crates, b.crates, t, (x) => x.id);
+    out.tanks = this.list("tanks", a.tanks, b.tanks, t, (x) => x.id, (p, x) => p.alive === x.alive && (!map || x.alive), true, map && ((x, y) => circleHitsSolid(map, x, y, TANK_RADIUS)));
+    out.bullets = this.list("bullets", a.bullets, b.bullets, t, (x) => x.id, undefined, false, map && ((x, y) => circleHitsWall(map, x, y, BULLET_RADIUS)));
+    const still = Math.min(t, 1); // crates, boxes and flags don't guess ahead
+    out.crates = this.list("crates", a.crates, b.crates, still, (x) => x.id);
     // A box that just came home must not slide back.
-    out.powerBoxes = this.list("powerBoxes", a.powerBoxes, b.powerBoxes, t, (x) => x.id, (p, x) => p.respawnMs <= 0 && x.respawnMs <= 0);
+    out.powerBoxes = this.list("powerBoxes", a.powerBoxes, b.powerBoxes, still, (x) => x.id, (p, x) => p.respawnMs <= 0 && x.respawnMs <= 0);
     // Carried flags are drawn on their carrier; a flag sent home must not slide back.
-    out.flags = this.list("flags", a.flags, b.flags, t, (x) => x.team, (p, x) => p.atHome === x.atHome);
+    out.flags = this.list("flags", a.flags, b.flags, still, (x) => x.team, (p, x) => p.atHome === x.atHome);
     return this.out;
   }
 
@@ -38,6 +42,7 @@ export class Blender {
     key: (x: T) => unknown,
     canBlend: (p: T, x: T) => boolean = () => true,
     angle = false,
+    blocked: ((x: number, y: number) => boolean) | null = null, // only when extrapolating
   ): T[] {
     const byKey = this.byKey;
     byKey.clear();
@@ -58,6 +63,10 @@ export class Blender {
       const slot = (pool[i] = copyInto(pool[i] ?? null, x));
       slot.x = lerp(p.x, x.x, t);
       slot.y = lerp(p.y, x.y, t);
+      if (blocked?.(slot.x, slot.y)) {
+        slot.x = x.x;
+        slot.y = x.y;
+      }
       if (angle) (slot as unknown as Tank).angle = lerpAngle((p as unknown as Tank).angle, (x as unknown as Tank).angle, t);
       out[i] = slot;
     }
