@@ -10,7 +10,7 @@ Turning, walking, bullets, ammo and crates follow measurements of the original g
 |---|---|
 | Nothing pressed | The soldier turns in place (`SPIN_SPEED`, 1.29π rad/s, one turn in 1.55 s), counter-clockwise at first. |
 | Any press | Fires one bullet immediately and reverses the turning direction. The heading holds still while the button is down and for `SPIN_PAUSE_MS` (60 ms) after. |
-| A press that can't fire | Inside the bounce guard or with an empty magazine: no shot and the gun keeps turning the same way (it doesn't reverse). An empty magazine gives a dry click. |
+| A press that can't fire | Inside the bounce guard (`FIRE_COOLDOWN_MS`): nothing happens, the gun keeps turning the same way. With an empty magazine: a dry click, no shot, but the turn still reverses so you can keep aiming. |
 | Keep holding for `DEFAULT_HOLD_MS` (100 ms) | Walks forward, exactly the way you were facing when you pressed, until released: starts at `DRIVE_START` (half) of `DRIVE_SPEED` (186 px/s) and reaches full speed after `DRIVE_RAMP_MS` (0.4 s). Releasing never fires. A normal finger tap (up to ~90 ms) never walks. |
 | Tap quickly (spray) | Shots less than `RAPID_FIRE_MS` (250 ms) apart are one burst. Each follows the gun as it wobbles back and forth, so the burst fans out like the original's, but never more than `RAPID_FIRE_WOBBLE` (12°) either side of the burst's first shot, so uneven tapping can't make it creep sideways. Wobble 0 would snap every burst shot onto one line. |
 
@@ -26,6 +26,12 @@ while the first is still down counts as a tap too.
 
 ## Bullets
 - Speed `BULLET_SPEED` (620 px/s), range `BULLET_RANGE` (410 px, about 10 tiles), then they drop.
+- A bullet hits a soldier anywhere along the stretch it flew that tick (not only where it
+  ended), so at 10 px a tick it can't skip past the edge of a soldier.
+- Online, a shot is checked against enemies where the shooter's screen showed them when they
+  fired (others are drawn a little in the past), up to `MAX_REWIND_TICKS` (250 ms) back. So if
+  it looked like a hit, it is one; on high ping a victim can occasionally fall just after
+  reaching cover.
 - They stop on walls, crates, desks, beds and power boxes. They fly over water and bushes.
   Teammates can't hurt each other.
 - Crates never break (`CRATE_BREAKS` off): they are solid cover you push into a lane to block it.
@@ -54,7 +60,8 @@ while the first is still down counts as a tap too.
   inside `FLAG_RADIUS` (6 px), so what you see is what counts.
 - Touch the enemy flag to pick it up: your centre within `TANK_RADIUS` + `FLAG_RADIUS` (20 px)
   of it, so your body has to reach the flag itself, not just pass near it. It rides on your back.
-  Carriers walk at `CARRIER_SPEED` (0.8×), with or without the speed power.
+  Carriers walk at `CARRIER_SPEED` (0.8×) of their speed: 0.8× normally, 1.6 × 0.8 = 1.28×
+  with the speed power.
 - Carry it home to win the round: your centre within `BASE_RADIUS` (20 px) of your own flag
   stand, i.e. standing on the stand. The respawn square doesn't count. A "RED WINS" / "BLUE WINS" banner shows,
   everything freezes, and after `ROUND_RESTART_MS` (6 s) a fresh round starts: everyone back on
@@ -99,7 +106,7 @@ speed set by their weights:
 
 So you shove a standing soldier at ⅓ speed, two soldiers walking head-on stall, and a crate
 starts slow then slides at about 47 px/s. A desk (`DESK_SIZE` 34 px, one tile) slides at about
-37 px/s. A bed (`BED_SIZE` 76 px, 2 × 2 tiles) slides at about 27 px/s; pushing a bed into the
+37 px/s. A bed (`BED_SIZE` 108 px on a 2 × 2 tile spot, leaving 12 px gaps between neighbours, too narrow for a soldier: go round or push them apart) slides at about 27 px/s; pushing a bed into the
 bed next to it pushes both, so packed rows barely move. Walls never move; whatever a wall blocks
 pushes back on the pusher.
 
