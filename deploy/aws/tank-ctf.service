@@ -1,4 +1,6 @@
-# The Colyseus game server. Caddy (HTTPS/WSS on 443) forwards to it on localhost:2567.
+# The Colyseus game server. Caddy (HTTPS/WSS on 443) forwards to it on localhost:2567; the
+# UDP game channel (WebRTC data channels) uses UDP 40000-40100 directly, which the security
+# group must allow. See docs/DEPLOY.md.
 [Unit]
 Description=Tank CTF game server
 After=network-online.target
@@ -9,13 +11,18 @@ User=tank
 WorkingDirectory=/opt/tank-ctf/server
 Environment=NODE_ENV=production
 Environment=PORT=2567
+Environment=UDP_PORT_MIN=40000
+Environment=UDP_PORT_MAX=40100
+# The Elastic IP: offered to browsers for the UDP channel if STUN can't find it.
+Environment=PUBLIC_IP=15.206.64.146
 # Optional secrets (voice chat TURN keys, see docs/VOICE.md), kept outside /opt/tank-ctf so
 # deploys never overwrite them. The leading "-" means the file may be missing.
 EnvironmentFile=-/etc/tank-ctf.env
-# tsx directly rather than `npm start`: npm wants a writable home for its logs.
-ExecStart=/opt/tank-ctf/node_modules/.bin/tsx src/index.ts
+# Compiled by deploy.sh (npm run build -w server).
+ExecStart=/usr/bin/node --enable-source-maps dist/index.js
 Restart=always
 RestartSec=2
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target

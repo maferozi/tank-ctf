@@ -17,13 +17,18 @@ if [[ "${1:-}" == "--setup" ]]; then
 fi
 
 echo "Deploying $(git log --oneline -1)"
-# Replace the code with HEAD, then install only what the game server needs (not the web app).
+# Replace the code with HEAD, install what the game server needs (not the web app; dev
+# dependencies included, esbuild builds it), compile it, and pick up service file changes.
+scp -q -i "$KEY" deploy/aws/tank-ctf.service "ubuntu@$IP:/tmp/tank-ctf.service"
 git archive --format=tar HEAD | "${SSH[@]}" "
   set -e
   cd /opt/tank-ctf
   find . -mindepth 1 -maxdepth 1 ! -name node_modules -exec rm -rf {} +
   tar -x
   npm ci --workspace server --workspace shared --include-workspace-root --no-audit --no-fund
+  npm run build -w server
+  sudo cp /tmp/tank-ctf.service /etc/systemd/system/tank-ctf.service
+  sudo systemctl daemon-reload
   sudo systemctl restart tank-ctf
   sleep 3
   systemctl is-active tank-ctf

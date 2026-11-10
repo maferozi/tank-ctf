@@ -11,6 +11,21 @@ other players freeze); at 0.5 CPU it is smooth (no gaps over 100 ms). So the ins
 CPU than a t2.micro can promise, and the server now runs as plain compiled JavaScript (no
 TypeScript compiler at runtime).
 
+## How the live server is set up (Nov 2026)
+
+- EC2 `tank-ctf-server`, t3.micro (unlimited credits by default for t3), Ubuntu 26.04, Mumbai,
+  Elastic IP `15.206.64.146` (step 2a is done). SSH key `~/.ssh/tank-ctf-aws` on Asad's Mac;
+  SSH is allowed only from his two home IPs (security group `launch-wizard-1`).
+- Code lives in `/opt/tank-ctf`, runs as the `tank` user from the systemd unit in
+  `deploy/aws/tank-ctf.service` (compiled `node dist/index.js`, `PUBLIC_IP` and the UDP range
+  set there). Secrets (TURN keys) go in `/etc/tank-ctf.env`, never overwritten by deploys.
+- Caddy terminates TLS for `15-206-64-146.sslip.io` (`deploy/aws/Caddyfile`).
+- **Deploy from the Mac, not with `git pull` on the server** (the server has no GitHub access):
+  `deploy/aws/deploy.sh` ships the committed HEAD, runs `npm ci` + `npm run build -w server`,
+  installs the service file and restarts. A fresh server: `deploy/aws/deploy.sh --setup`.
+- Steps 1-4 below are the general guide (other layouts, checking CPU credits, changing the
+  instance type); step 3's security group table and step 5's checks apply as they are.
+
 Prices change and depend on the region: check the
 [EC2 pricing page](https://aws.amazon.com/ec2/pricing/on-demand/) (pick Asia Pacific (Mumbai))
 before you choose. Nothing below states a price.
