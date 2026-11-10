@@ -68,13 +68,24 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
   In-game Leave button with a confirm. A dropped player (refresh, network blip) keeps their seat
   and soldier for 30 s and rejoins automatically. After the match everyone returns to the lobby.
 
-## Deployed (31 Oct 2026)
+## Deployed (updated 9 Nov 2026)
 - Web: Vercel project `tank-ctf` (team "asad's projects"), https://tank-ctf.vercel.app, root
   directory `web`, auto-deploys on push to `main`. Env: `NEXT_PUBLIC_SERVER_URL` =
-  `wss://tank-ctf-server-jd5n.onrender.com` (Production).
-- Game server: Render web service `tank-ctf-server`, Singapore, Free plan, from `main`
-  (`npm ci` / `npm start`, Node 22, health check `/health`), auto-deploys on push. Sleeps after
-  15 min idle (~1 min to wake). `render.yaml` documents the same settings.
+  `wss://15-206-64-146.sslip.io` (Production; changing it needs a redeploy).
+- Game server (since 9 Nov 2026): AWS EC2 `tank-ctf-server`, Mumbai (ap-south-1), t3.micro,
+  Ubuntu 26.04, Elastic IP 15.206.64.146, on the AWS free plan's credits. Always on (no sleep).
+  Caddy serves HTTPS/WSS at `15-206-64-146.sslip.io` with an automatic Let's Encrypt
+  certificate and forwards to the game server (systemd service `tank-ctf`, port 2567).
+  **Not auto-deployed:** after pushing, run `deploy/aws/deploy.sh` (ships the committed HEAD,
+  installs server deps, restarts). SSH key `~/.ssh/tank-ctf-aws`; SSH is allowed only from
+  Asad's two home IPs (221.120.215.10, 119.63.130.154), so update the security group
+  `launch-wizard-1` if those change. Optional voice TURN keys go in `/etc/tank-ctf.env` on the
+  server (not set yet). See `deploy/aws/`.
+- Measured from Lahore, 4 bots: press to shot seen 93 ms median on AWS Mumbai vs 151 ms on
+  Render Singapore; worst snapshot gap 51 ms vs 316 ms.
+- Old game server, kept as a backup for now: Render web service `tank-ctf-server`, Singapore,
+  Free plan, still auto-deploys from `main` (`render.yaml`). Sleeps after 15 min idle. The
+  website no longer uses it; delete it once AWS has proven itself.
 - Live test from Lahore: smoke test passes; 8 bots: 60 ticks/s, 0 state mismatches, press to
   shot ~130 ms median, snapshot gap p99 ~105 ms (real-network jitter).
 
@@ -150,12 +161,12 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
   the phase or teams change. The server relays signaling (`MSG.voice`) only within a voice group,
   stamps the sender, size- and rate-limits it, and hands out ICE config: STUN always, Cloudflare
   TURN or our own coturn (per-player expiring credentials from a shared secret) from env
-  (`server/.env`, Render dashboard). Speech-tuned Opus (mono,
+  (`server/.env` locally, `/etc/tank-ctf.env` on the AWS server). Speech-tuned Opus (mono,
   28 kbps cap, FEC, DTX). Mic starts on the first tap in the room; mute chip in lobby and game
   (remembered), speaking glow on lobby rows and a ring on in-game name tags, one-time
   "use headphones" hint. Colyseus' 4 KB message limit raised to 20 KB for SDPs. Tested in Chrome
   with 3 players (lobby mesh, team split in the match, mute, leave). Needs a TURN key set on
-  Render for players on strict networks; a real-phone test is next. See docs/VOICE.md.
+  the game server for players on strict networks; a real-phone test is next. See docs/VOICE.md.
 - Voice fixes after review (5 Nov 2026): self-hosted TURN now uses coturn's shared-secret REST
   credentials (`TURN_SECRET`; a fixed password would be handed to anyone in a room); connections
   that never come up are restarted after a deadline; a peer can force a fresh connection at most

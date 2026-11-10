@@ -4,6 +4,7 @@ Online one-button capture-the-flag game for Asad and friends. Personal project.
 Read `PLAN.md` (decisions, phases, status) and `docs/GAMEPLAY.md` (rules and numbers) first.
 
 ## How it's built
+
 - npm workspaces: `shared/` (game rules), `server/` (Colyseus 0.18), `web/` (Next.js 16, App Router).
 - `shared/src/sim.ts` is the single source of truth for gameplay. It must stay deterministic
   (no `Math.random`, no wall-clock time): the server runs it, and clients will run it for
@@ -29,6 +30,7 @@ Read `PLAN.md` (decisions, phases, status) and `docs/GAMEPLAY.md` (rules and num
 - TypeScript 7 needs `"types": ["node"]` in tsconfigs that use Node APIs.
 
 ## Working rules
+
 - Run `npm test -w shared` and `npm run typecheck` after gameplay changes. Add a sim test for
   every rule change.
 - Gameplay changes come from Asad's playtesting; keep his numbers exactly and say what changed.
