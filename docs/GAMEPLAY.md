@@ -26,12 +26,17 @@ while the first is still down counts as a tap too.
 
 ## Bullets
 - Speed `BULLET_SPEED` (620 px/s), range `BULLET_RANGE` (410 px, about 10 tiles), then they drop.
+- A bullet hits a soldier whose centre is within `TANK_HIT_RADIUS` + `BULLET_RADIUS` (14 + 4 =
+  18 px) of its path: `TANK_HIT_RADIUS` = `TANK_RADIUS` + 2 matches the drawn body (about 14 px),
+  so a bullet that touches the soldier on screen hits. `TANK_RADIUS` (12) stays the size for walls
+  and pushing. (Was 12 + 4 = 16 px: bullets grazing the drawn body passed through.)
 - A bullet hits a soldier anywhere along the stretch it flew that tick (not only where it
   ended), so at 10 px a tick it can't skip past the edge of a soldier.
 - Online, a shot is checked against enemies where the shooter's screen showed them when they
-  fired (others are drawn a little in the past), up to `MAX_REWIND_TICKS` (250 ms) back. So if
-  it looked like a hit, it is one; on high ping a victim can occasionally fall just after
-  reaching cover.
+  fired (others are drawn a little in the past), up to `MAX_REWIND_TICKS` (30 ticks, 500 ms;
+  was 250 ms) back. So if it looked like a hit, it is one; on high ping a victim can
+  occasionally fall just after reaching cover.
+- Online, a shot leaves along the heading the shooter's screen showed (see docs/NETCODE.md).
 - They stop on walls, crates, desks, beds and power boxes. They fly over water and bushes.
   Teammates can't hurt each other.
 - Crates never break (`CRATE_BREAKS` off): they are solid cover you push into a lane to block it.

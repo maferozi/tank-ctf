@@ -21,6 +21,10 @@ import {
 //
 // Nothing here runs per frame: the game only reads `speaking`, a set updated ~10 times a
 // second by a timer.
+//
+// Light on the game: the Opus encoder is capped lower during a match (VOICE_MATCH_BITRATE),
+// setGameStress(true) stops sending your mic while the game connection struggles, and the
+// first tap does as little as it can on the main thread (see unlockAudio).
 
 export type MicState = "idle" | "starting" | "on" | "blocked";
 
@@ -36,6 +40,7 @@ export interface VoiceChat {
   readonly needsTap: boolean; // the browser blocked playback: a tap is needed to hear others
   readonly showHint: boolean; // "use headphones", once, after the first tap
   readonly sharing: boolean; // your voice also goes to the other team in a match (your choice)
+  readonly paused: boolean; // your mic isn't being sent: the game connection is struggling (setGameStress)
   readonly version: number; // changes whenever anything above does
   subscribe(listener: () => void): () => void;
   start(): void; // from a user gesture: turns the mic on and unlocks audio playback
@@ -45,6 +50,10 @@ export interface VoiceChat {
   dismissHint(): void;
   hintShown(): void; // the hint is on screen: remember it, hide it after a while
   setRoster(roster: Roster): void;
+  // The game connection is in trouble (late snapshots, a reconnect): while true your mic is
+  // not sent to anyone (you still hear everyone), so voice doesn't compete with the game for
+  // the uplink. Cheap to call often; only changes do anything.
+  setGameStress(stressed: boolean): void;
   reconnected(): void; // the room connection came back after a blip
   dispose(): void; // stop the mic, close every connection
 }
@@ -59,6 +68,14 @@ const DEFAULT_CONFIG: VoiceConfig = {
   refreshMs: 6 * 3600_000,
 };
 const CONFIG_WAIT_MS = 3000; // then go ahead with STUN only
+
+// Opus cap during a match (the lobby uses VOICE_MAX_BITRATE, 28 kbps). Speech stays clear at
+// 16 kbps and leaves more of a phone's uplink to the game. Changed on the sender
+// (RTCRtpSender.setParameters), no renegotiation.
+const VOICE_MATCH_BITRATE = 16_000;
+// Speaking meters (an AudioContext and analysers) are built when the main thread is idle, not
+// inside the tap that turns voice on; this long at most.
+const METER_IDLE_TIMEOUT_MS = 1000;
 
 const SPEAK_POLL_MS = 100;
 const SPEAK_LEVEL = 0.012; // RMS of the waveform (-1..1) that counts as talking
@@ -105,7 +122,8 @@ interface Peer {
   stream: MediaStream | null;
   meter: Meter | null;
   restarts: number;
-  bitrateCapped: boolean;
+  bitrate: number | null; // encoder cap last set on the sender (null: not set yet)
+  bitrateBusy: boolean; // a setParameters call is under way
   timer: ReturnType<typeof setTimeout> | null;
   deadline: ReturnType<typeof setTimeout> | null; // see NEGOTIATE_DEADLINE_MS
   closed: boolean;
@@ -119,11 +137,14 @@ interface PeerStats {
   rttMs: number | null;
   level: number | null; // loudness heard from this player (RMS), null: no meter
   playing: boolean; // their <audio> element is playing
+  maxBitrate: number | null; // our encoder cap toward them (28k lobby, 16k match)
+  sending: boolean; // our mic is on this connection
 }
 
 declare global {
   interface Window {
     __voice?: unknown;
+    __voiceChat?: VoiceChat; // dev only: the live object, e.g. __voiceChat.setGameStress(true)
   }
 }
 
@@ -184,6 +205,8 @@ class Voice implements VoiceChat {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private hintTimer: ReturnType<typeof setTimeout> | null = null;
   private gestureArmed = false;
+  private stressed = false; // setGameStress
+  private metersScheduled = false;
   private disposed = false;
   private stats: Record<string, PeerStats> = {};
 
@@ -197,10 +220,16 @@ class Voice implements VoiceChat {
     });
     if (typeof RTCPeerConnection !== "function") this.unavailable = "Voice chat isn't supported in this browser";
     this.armGesture();
+    // The tap that joined or created the room still counts as a gesture: turn voice on now,
+    // in the lobby, rather than on the first tap of the match, where opening the mic and
+    // setting up audio would land in the middle of play.
+    const activation = (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation;
+    if (activation?.isActive && !this.unavailable) this.start();
     window.addEventListener("pagehide", this.onPageHide);
     window.addEventListener("pageshow", this.onPageShow);
     if (process.env.NODE_ENV !== "production") {
       this.statsTimer = setInterval(() => void this.collectStats(), STATS_MS);
+      window.__voiceChat = this;
       this.publishStats();
     }
   }
@@ -271,7 +300,7 @@ class Voice implements VoiceChat {
       this.micStream = stream;
       this.micTrack = track;
       for (const peer of this.peersById.values()) this.updateSender(peer);
-      if (this.ctx) this.localMeter = this.meter(stream);
+      this.scheduleMeters();
       this.setMic("on");
     } catch (err) {
       const name = (err as DOMException).name;
@@ -381,24 +410,55 @@ class Voice implements VoiceChat {
     void audio.play().then(() => this.maybeDisarm(), this.playRefused);
   }
 
+  // Playback itself goes through <audio> elements; the AudioContext is only for the speaking
+  // meters. Making it (and its analysers) inside the tap made that tap one long task, so it is
+  // made when the main thread is idle (scheduleMeters). Browsers still let it run: Chrome
+  // remembers that the page had a tap, Safari lets audio run while the mic is open. If it
+  // starts suspended anyway (Safari, listening with the mic off), the gesture listeners stay
+  // armed and the next tap resumes it here.
   private unlockAudio(): void {
     if (this.disposed) return;
-    if (!this.ctx) {
-      const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (Ctx) {
-        this.ctx = new Ctx();
-        this.ctx.onstatechange = () => {
-          if (!this.ctx || this.ctx.state === "closed") return;
-          if (this.ctx.state === "running") this.maybeDisarm();
-          else this.armGesture();
-        };
-        if (this.micStream) this.localMeter = this.meter(this.micStream);
-        for (const peer of this.peersById.values()) this.attachMeter(peer);
-        this.speakTimer = setInterval(this.pollSpeaking, SPEAK_POLL_MS);
-      }
-    }
     if (this.ctx && this.ctx.state !== "running") void this.ctx.resume().catch(() => {});
     for (const peer of this.peersById.values()) if (peer.audio?.paused && peer.audio.srcObject) this.play(peer.audio);
+    this.scheduleMeters();
+  }
+
+  // Builds the AudioContext and any missing meters (yours, each peer's) at the next idle
+  // moment. Called after the first tap, when the mic comes on, and when a peer's audio arrives.
+  private scheduleMeters(): void {
+    if (this.metersScheduled || this.disposed) return;
+    this.metersScheduled = true;
+    const run = () => {
+      this.metersScheduled = false;
+      if (!this.disposed) this.buildMeters();
+    };
+    if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout: METER_IDLE_TIMEOUT_MS });
+    else this.later(50, run);
+  }
+
+  private buildMeters(): void {
+    if (!this.ctx) {
+      // Only once there is something to measure (a mic or a peer) or a tap has happened.
+      const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctx) return;
+      try {
+        this.ctx = new Ctx();
+      } catch {
+        return; // no speaking glows; voice itself works without them
+      }
+      this.ctx.onstatechange = () => {
+        if (!this.ctx || this.ctx.state === "closed") return;
+        if (this.ctx.state === "running") this.maybeDisarm();
+        else this.armGesture();
+      };
+      if (this.ctx.state !== "running") {
+        void this.ctx.resume().catch(() => {});
+        this.armGesture(); // a later tap resumes it (unlockAudio)
+      }
+      this.speakTimer = setInterval(this.pollSpeaking, SPEAK_POLL_MS);
+    }
+    if (this.micStream && !this.localMeter) this.localMeter = this.meter(this.micStream);
+    for (const peer of this.peersById.values()) this.attachMeter(peer);
   }
 
   // ---- Speaking detection ----
@@ -425,7 +485,7 @@ class Voice implements VoiceChat {
   // someone starts or stops talking.
   private pollSpeaking = (): void => {
     const now = performance.now();
-    let changed = this.check(this.me, this.localMeter, this.mic === "on" && !this.muted, now);
+    let changed = this.check(this.me, this.localMeter, this.mic === "on" && !this.muted && !this.stressed, now);
     for (const peer of this.peersById.values()) {
       if (this.check(peer.id, peer.meter, peer.pc.connectionState === "connected", now)) changed = true;
     }
@@ -452,9 +512,24 @@ class Voice implements VoiceChat {
 
   setRoster(roster: Roster): void {
     const wasSharing = this.sharing;
+    const phaseChanged = this.roster?.phase !== roster.phase;
     this.roster = roster;
     this.reconcile();
+    if (phaseChanged) for (const peer of this.peersById.values()) this.applyBitrate(peer);
     if (this.sharing !== wasSharing) this.notify();
+  }
+
+  get paused(): boolean {
+    return this.stressed && this.mic === "on";
+  }
+
+  setGameStress(stressed: boolean): void {
+    if (this.stressed === stressed || this.disposed) return;
+    this.stressed = stressed;
+    if (stressed) this.speaking.delete(this.me);
+    // replaceTrack(null): nothing is sent, the connection and what you hear are untouched.
+    for (const peer of this.peersById.values()) this.updateSender(peer);
+    this.notify();
   }
 
   reconnected(): void {
@@ -537,7 +612,8 @@ class Voice implements VoiceChat {
       stream: null,
       meter: null,
       restarts: 0,
-      bitrateCapped: false,
+      bitrate: null,
+      bitrateBusy: false,
       timer: null,
       deadline: null,
       closed: false,
@@ -771,7 +847,7 @@ class Voice implements VoiceChat {
   // Your mic goes to a player only if they may hear you (your team, or an enemy while you
   // share your voice). Other connections exist only so you can hear them: they get silence.
   private trackFor(id: string): MediaStreamTrack | null {
-    if (!this.micTrack || !this.roster) return null;
+    if (!this.micTrack || !this.roster || this.stressed) return null;
     return canHear(this.roster, id, this.me) ? this.micTrack : null;
   }
 
@@ -810,7 +886,7 @@ class Voice implements VoiceChat {
     this.play(peer.audio); // refused (autoplay rules): retried on the next tap
     this.dropMeter(peer.meter);
     peer.meter = null;
-    this.attachMeter(peer);
+    if (this.ctx) this.scheduleMeters(); // before the first tap there is no context yet
   }
 
   private onConnectionState(peer: Peer): void {
@@ -822,7 +898,7 @@ class Voice implements VoiceChat {
       if (peer.timer) this.clearLater(peer.timer);
       if (peer.deadline) this.clearLater(peer.deadline);
       peer.timer = peer.deadline = null;
-      this.capBitrate(peer);
+      this.applyBitrate(peer);
     } else if (state === "disconnected") {
       // Often comes back by itself (Wi-Fi hiccup); restart ICE if it doesn't.
       if (peer.timer) this.clearLater(peer.timer);
@@ -852,19 +928,33 @@ class Voice implements VoiceChat {
     }
   }
 
-  // Speech needs little: cap the encoder (the SDP's maxaveragebitrate asks the other side).
-  private capBitrate(peer: Peer): void {
+  // Speech needs little: cap the encoder (the SDP's maxaveragebitrate asks the other side
+  // for at most VOICE_MAX_BITRATE), lower still during a match. Applied once connected and
+  // again whenever the room's phase changes; one setParameters call at a time per sender.
+  private applyBitrate(peer: Peer): void {
     const sender = peer.sender;
-    if (!sender || peer.bitrateCapped) return;
-    peer.bitrateCapped = true;
+    const want = this.roster?.phase === "playing" ? VOICE_MATCH_BITRATE : VOICE_MAX_BITRATE;
+    if (!sender || peer.closed || peer.bitrateBusy || peer.bitrate === want) return;
+    if (peer.pc.connectionState !== "connected") return; // set when it connects
+    let params: RTCRtpSendParameters;
     try {
-      const params = sender.getParameters();
+      params = sender.getParameters();
       if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
-      for (const e of params.encodings) e.maxBitrate = VOICE_MAX_BITRATE;
-      void sender.setParameters(params).catch(() => {});
+      for (const e of params.encodings) e.maxBitrate = want;
     } catch {
-      // Older browsers: the SDP limit still applies.
+      return; // older browsers: the SDP limit still applies
     }
+    peer.bitrateBusy = true;
+    sender.setParameters(params).then(
+      () => {
+        peer.bitrateBusy = false;
+        peer.bitrate = want;
+        this.applyBitrate(peer); // the phase may have changed meanwhile
+      },
+      () => {
+        peer.bitrateBusy = false; // tried again on the next phase change or reconnect
+      },
+    );
   }
 
   // ---- ICE config ----
@@ -967,6 +1057,7 @@ class Voice implements VoiceChat {
     this.speaking.clear();
     this.mic = "idle";
     if (process.env.NODE_ENV !== "production" && window.__voice) delete window.__voice;
+    if (process.env.NODE_ENV !== "production" && window.__voiceChat === this) delete window.__voiceChat;
     this.notify();
   }
 
@@ -985,6 +1076,8 @@ class Voice implements VoiceChat {
         rttMs: null,
         level: peer.meter ? Math.round(peer.meter.level * 1000) / 1000 : null,
         playing: !!peer.audio && !peer.audio.paused,
+        maxBitrate: peer.bitrate,
+        sending: !!peer.sender?.track,
       };
       try {
         const report = await peer.pc.getStats();
@@ -1015,6 +1108,7 @@ class Voice implements VoiceChat {
       mic: this.mic,
       micError: this.micError,
       muted: this.muted,
+      paused: this.stressed || undefined,
       unavailable: this.unavailable || undefined,
       needsTap: this.needsTap,
       relay: this.config ? (this.config.relay ?? "relay not configured") : "waiting for config",

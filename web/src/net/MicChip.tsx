@@ -10,7 +10,7 @@ export function useVoice(voice: VoiceChat): VoiceChat {
   return voice;
 }
 
-type ChipState = "unavailable" | "tap" | "off" | "connecting" | "on" | "muted" | "blocked";
+type ChipState = "unavailable" | "tap" | "off" | "connecting" | "on" | "muted" | "blocked" | "paused";
 
 function chipState(voice: VoiceChat): ChipState {
   if (voice.unavailable) return "unavailable";
@@ -18,7 +18,8 @@ function chipState(voice: VoiceChat): ChipState {
   if (voice.mic === "blocked") return "blocked";
   if (voice.mic === "idle") return "off";
   if (voice.mic === "starting" || voice.connecting) return "connecting";
-  return voice.muted ? "muted" : "on";
+  if (voice.muted) return "muted";
+  return voice.paused ? "paused" : "on";
 }
 
 const LABEL: Record<ChipState, string> = {
@@ -29,6 +30,7 @@ const LABEL: Record<ChipState, string> = {
   on: "Mic on",
   muted: "Muted",
   blocked: "Mic blocked",
+  paused: "Mic paused",
 };
 
 // CSS class per state ("unavailable" looks like "blocked", "tap" pulses like "connecting").
@@ -40,6 +42,7 @@ const LOOK: Record<ChipState, string> = {
   on: "on",
   muted: "muted",
   blocked: "blocked",
+  paused: "muted",
 };
 
 // Who hears you in the match: your team only (default), or both teams. Your own choice;
@@ -89,6 +92,8 @@ export function MicChip({ voice, compact = false }: { voice: VoiceChat; compact?
         ? "Turn on your mic"
         : state === "muted"
           ? "Muted. Tap to talk"
+          : state === "paused"
+            ? "Mic paused while the game connection recovers. Tap to mute"
           : state === "connecting"
             ? voice.muted
               ? "Connecting voice (muted)"

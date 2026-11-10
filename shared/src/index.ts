@@ -8,3 +8,5 @@ export * from "./flags";
 export * from "./match";
 export * from "./maps";
 export * from "./voice";
+export * from "./udp";
+export * from "./clientNet";

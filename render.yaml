@@ -1,13 +1,16 @@
 # Render Blueprint: the game server (Colyseus over WebSockets).
 # The web app is deployed separately on Vercel (it can't hold WebSocket connections).
+# (The live server runs on AWS EC2 instead; see docs/DEPLOY.md. This file still works for Render.)
 services:
   - type: web
     name: tank-ctf-server
     runtime: node
     region: singapore # closest Render region to Pakistan
     plan: free # sleeps after 15 min without traffic; ~1 min to wake
-    buildCommand: npm ci
-    startCommand: npm start
+    # npm ci installs dev dependencies too (esbuild, used by the build); the server then
+    # runs as plain JavaScript (server/dist/index.js), no TypeScript at runtime.
+    buildCommand: npm ci && npm run build -w server
+    startCommand: npm start -w server
     healthCheckPath: /health
     autoDeploy: true
     envVars:

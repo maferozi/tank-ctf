@@ -1,9 +1,11 @@
 import { Client, type Room } from "@colyseus/sdk";
 import {
+  ClientNet,
   MSG,
   ROOM_NAME,
   SnapshotDecoder,
   type CreateOptions,
+  type InputFrame,
   type JoinOptions,
   type RoomInfo,
   type Roster,
@@ -11,6 +13,7 @@ import {
   type SnapshotMessage,
   type Team,
 } from "@tank/shared";
+import { createUdpChannel, type UdpChannel } from "./udp";
 import { createVoiceChat, type VoiceChat } from "./voice";
 
 // The one live connection to a game room. Kept outside React so it survives the
@@ -20,9 +23,13 @@ export interface Session {
   roster: Roster | null; // null until the server's first roster arrives
   left: boolean; // the connection closed for good
   subscribe(listener: () => void): () => void; // roster or connection changes
-  // Decoded game snapshots (the server sends deltas; see SnapshotMessage).
+  // Decoded game snapshots (the server sends deltas; see SnapshotMessage), from the
+  // WebSocket or the UDP channel, whichever is carrying them (each tick once, in order).
   onSnapshot(listener: (snap: Snapshot) => void): () => void;
-  decoder: SnapshotDecoder; // for stats
+  // Your button samples: over the UDP channel when it is open, else the WebSocket.
+  sendInput(frames: InputFrame[]): void;
+  decoder: SnapshotDecoder; // WebSocket snapshots, for stats
+  net: ClientNet; // both paths (transport, channel stats)
   voice: VoiceChat; // voice chat with the players you can hear (see voice.ts)
   setTeam(team: Team): void; // lobby: switch your own team
   movePlayer(playerId: string, team: Team): void; // lobby, host only
@@ -77,16 +84,17 @@ function forgetToken(code: string): void {
   }
 }
 
-// If a requested keyframe doesn't come (it should be the very next snapshot), ask again.
-const KEYFRAME_RETRY_MS = 500;
-
 function track(room: Room): Session {
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((l) => l());
-  const snapshotListeners = new Set<(snap: Snapshot) => void>();
-  const decoder = new SnapshotDecoder();
+  let udp: UdpChannel | null = null;
+  const net = new ClientNet({
+    sendInputWs: (frames) => room.send(MSG.input, frames),
+    requestKeyframeWs: () => room.send(MSG.keyframe),
+    myId: () => room.sessionId,
+    channelDead: (reason) => udp?.dead(reason),
+  });
   const voice = createVoiceChat(room);
-  let keyframeAskedAt = -Infinity;
   const session: Session = {
     room,
     roster: null,
@@ -95,11 +103,10 @@ function track(room: Room): Session {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    onSnapshot(listener) {
-      snapshotListeners.add(listener);
-      return () => snapshotListeners.delete(listener);
-    },
-    decoder,
+    onSnapshot: (listener) => net.onSnapshot(listener),
+    sendInput: (frames) => net.sendInput(frames),
+    decoder: net.wsDecoder,
+    net,
     voice,
     setTeam: (team) => room.send(MSG.team, { team }),
     movePlayer: (playerId, team) => room.send(MSG.move, { playerId, team }),
@@ -108,6 +115,7 @@ function track(room: Room): Session {
       forgetToken(room.roomId);
       if (current === session) current = null;
       voice.dispose(); // stops the mic and says bye to every voice peer
+      udp?.dispose();
       await room.leave(true);
     },
   };
@@ -115,7 +123,8 @@ function track(room: Room): Session {
   // The SDK reconnects by itself after a network blip; the token changes when it does.
   room.onReconnect(() => {
     saveToken(room);
-    decoder.reset(); // the server sends a keyframe after a reconnect
+    net.reset(); // the server sends a keyframe after a reconnect
+    udp?.restart(); // the server closed our channel when the connection dropped
     voice.reconnected();
   });
   room.onMessage(MSG.roster, (roster: Roster) => {
@@ -129,22 +138,12 @@ function track(room: Room): Session {
   });
   // Decoded here, not in the game screen, so the delta chain is unbroken however long the
   // screen takes to subscribe (snapshots arriving before that are just not shown).
-  room.onMessage(MSG.snapshot, (msg: SnapshotMessage) => {
-    const snap = decoder.decode(msg);
-    if (!snap) {
-      const now = performance.now();
-      if (now - keyframeAskedAt > KEYFRAME_RETRY_MS) {
-        keyframeAskedAt = now;
-        room.send(MSG.keyframe);
-      }
-      return;
-    }
-    keyframeAskedAt = -Infinity;
-    snapshotListeners.forEach((l) => l(snap));
-  });
+  room.onMessage(MSG.snapshot, (msg: SnapshotMessage) => net.onWsMessage(msg));
+  udp = createUdpChannel(room, net);
   room.onLeave(() => {
     session.left = true;
     voice.dispose();
+    udp?.dispose();
     forgetToken(room.roomId);
     notify();
   });

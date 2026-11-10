@@ -2,24 +2,24 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULT_MAP } from "./map";
 import { SNAPSHOT_EVERY_TICKS } from "./net";
-import { CALM_TICKS, InputQueue, MAX_INPUT_QUEUE, MAX_TARGET_INPUT_QUEUE, Predictor, TARGET_INPUT_QUEUE, type InputFrame } from "./prediction";
+import { CALM_TICKS, InputQueue, MAX_INPUT_QUEUE, MAX_SAMPLES_PER_TICK, MAX_TARGET_INPUT_QUEUE, Predictor, TARGET_INPUT_QUEUE, type InputFrame } from "./prediction";
 import { addTank, cloneState, createState, step, type GameState, type TankInput } from "./sim";
 
 const map = DEFAULT_MAP;
 const config = { holdMs: 60 };
 
-test("input queue applies one sample per tick and acks it", () => {
+test("input queue applies one sample per tick and acks it; with none it applies none", () => {
   const q = new InputQueue();
   q.push([
     { seq: 1, held: true, pressed: true },
     { seq: 2, held: true, pressed: false },
   ]);
-  assert.deepEqual(q.next(), { held: true, pressed: true });
+  assert.deepEqual(q.next(), [{ held: true, pressed: true }]);
   assert.equal(q.ack, 1);
-  assert.deepEqual(q.next(), { held: true, pressed: false });
+  assert.deepEqual(q.next(), [{ held: true, pressed: false }]);
   assert.equal(q.ack, 2);
-  // Nothing queued: keep the button as it was (marked stale), ack unchanged.
-  assert.deepEqual(q.next(), { held: true, pressed: false, stale: true });
+  // Nothing queued: nothing is made up (the soldier waits), ack unchanged.
+  assert.deepEqual(q.next(), []);
   assert.equal(q.ack, 2);
 });
 
@@ -28,23 +28,48 @@ test("input queue skips malformed frames instead of throwing", () => {
   const bad = [null, 1, "x", undefined, { seq: 1, held: true, pressed: true }] as unknown as InputFrame[];
   assert.doesNotThrow(() => q.push(bad));
   assert.equal(q.length, 1);
-  assert.deepEqual(q.next(), { held: true, pressed: true });
+  assert.deepEqual(q.next(), [{ held: true, pressed: true }]);
 });
 
-test("a backlog drains back to the target depth (plus one of slack), one extra sample per tick, keeping taps", () => {
+test("input queue keeps a press's aim and seen tick, only finite numbers, only on presses", () => {
   const q = new InputQueue();
+  q.push([
+    { seq: 1, held: false, pressed: true, aim: 1.25, seen: 40 },
+    { seq: 2, held: false, pressed: true, aim: Number.NaN, seen: Infinity },
+    { seq: 3, held: false, pressed: false, aim: 2, seen: 41 },
+    { seq: 4, held: false, pressed: true, aim: "x", seen: null } as unknown as InputFrame,
+  ]);
+  const applied = [...q.next(), ...q.next(), ...q.next()];
+  assert.deepEqual(applied, [
+    { held: false, pressed: true, aim: 1.25, seen: 40 },
+    { held: false, pressed: true },
+    { held: false, pressed: false },
+    { held: false, pressed: true },
+  ]);
+});
+
+test("a backlog drains two samples a tick, in order, never skipping one", () => {
+  const q = new InputQueue();
+  const n = 20;
   const frames: InputFrame[] = [];
-  for (let s = 1; s <= MAX_INPUT_QUEUE; s++) frames.push({ seq: s, held: false, pressed: s === 2 });
+  for (let s = 1; s <= n; s++) frames.push({ seq: s, held: s % 3 === 0, pressed: s === 2 || s === 5 });
   q.push(frames);
+  const applied: number[] = [];
   let fired = 0;
-  // Net one sample fewer per tick until the target plus one sample of slack.
-  for (let tick = 0; tick < MAX_INPUT_QUEUE - TARGET_INPUT_QUEUE; tick++) {
-    if (q.next().pressed) fired++;
+  let next = n + 1;
+  for (let tick = 0; tick < 40; tick++) {
+    const before = q.ack;
+    const got = q.next();
+    assert.ok(got.length >= 1 && got.length <= MAX_SAMPLES_PER_TICK, `tick ${tick}: ${got.length} samples`);
+    for (let i = 0; i < got.length; i++) applied.push(before + 1 + i);
+    fired += got.filter((x) => x.pressed).length;
     // A steady client adds one sample per tick.
-    q.push([{ seq: MAX_INPUT_QUEUE + 1 + tick, held: false, pressed: false }]);
+    q.push([{ seq: next++, held: false, pressed: false }]);
   }
-  assert.equal(q.length, TARGET_INPUT_QUEUE + 1);
-  assert.equal(fired, 1, "the tap in the backlog still fires exactly once");
+  assert.deepEqual(applied, Array.from({ length: applied.length }, (_, i) => i + 1), "every sample once, in order");
+  assert.equal(fired, 2);
+  assert.ok(q.length <= TARGET_INPUT_QUEUE + 1, `drained to ${q.length}`);
+  assert.equal(q.dropped, 0);
 });
 
 test("input queue ignores duplicates and old samples", () => {
@@ -54,35 +79,36 @@ test("input queue ignores duplicates and old samples", () => {
     { seq: 5, held: false, pressed: false },
     { seq: 3, held: false, pressed: false },
   ]);
-  q.next();
-  assert.deepEqual(q.next(), { held: true, pressed: false, stale: true }, "only seq 5 was queued");
+  assert.deepEqual(q.next(), [{ held: true, pressed: true }]);
+  assert.deepEqual(q.next(), [], "only seq 5 was queued");
 });
 
-test("input queue overflow drops old samples but never loses a tap", () => {
+test("only past the hard cap are samples dropped, and a tap still survives", () => {
   const q = new InputQueue();
   const frames: InputFrame[] = [{ seq: 1, held: false, pressed: true }];
-  for (let s = 2; s <= MAX_INPUT_QUEUE + 3; s++) frames.push({ seq: s, held: false, pressed: false });
+  for (let s = 2; s <= MAX_INPUT_QUEUE; s++) frames.push({ seq: s, held: false, pressed: false });
   q.push(frames);
-  assert.equal(q.next().pressed, true, "the merged-away tap must still fire");
+  assert.equal(q.dropped, 0, "a backlog up to the cap is kept whole");
+  q.push([2, 3, 4].map((k) => ({ seq: MAX_INPUT_QUEUE + k - 1, held: false, pressed: false })));
+  assert.equal(q.dropped, 3);
+  assert.equal(q.length, MAX_INPUT_QUEUE);
+  assert.equal(q.next()[0]!.pressed, true, "the tap must still fire");
 });
 
-test("draining a backlog of fast taps never merges two taps into one", () => {
+test("dropping at the hard cap never merges two taps into one", () => {
   const q = new InputQueue();
-  // A 10 taps/s spray (a 2-tick tap every 6 ticks) arriving all at once after a stall.
+  // A 10 taps/s spray (a 2-tick tap every 6 ticks), more of it than the cap holds.
   const frames: InputFrame[] = [];
-  for (let s = 1; s <= 18; s++) {
+  for (let s = 1; s <= MAX_INPUT_QUEUE + 6; s++) {
     const k = (s - 1) % 6;
     frames.push({ seq: s, held: k < 2, pressed: k === 0 });
   }
   q.push(frames);
   let taps = 0;
-  for (let tick = 0; tick < 40; tick++) {
-    if (q.next().pressed) taps++;
-    q.push([{ seq: 19 + tick, held: false, pressed: false }]);
-  }
-  assert.equal(taps, 3, "all three taps in the backlog fire");
-  assert.ok(q.length <= TARGET_INPUT_QUEUE + 1, `drained to ${q.length}`);
+  for (let tick = 0; tick < 60; tick++) for (const x of q.next()) if (x.pressed) taps++;
+  assert.equal(taps, 6, "all six taps fire");
   assert.equal(q.lostPresses, 0);
+  assert.equal(q.dropped, 6);
 });
 
 test("the input buffer deepens when a player's packets run late and shrinks again when calm", () => {
@@ -243,4 +269,80 @@ test("reusing buffers doesn't change what prediction shows", () => {
     compared++;
   }
   assert.equal(compared, 900);
+});
+
+// A jittery uplink: in-order delivery with random delays (a seeded LCG, so the test is
+// repeatable) and a long stall every 2 s, then the backlog arrives at once. The server
+// runs its tick as on the real server; every shot the shooter saw on screen must leave the
+// server along exactly the same heading.
+function jitteryShots(seed: number) {
+  let r = seed >>> 0;
+  const rand = () => ((r = (Math.imul(r, 1664525) + 1013904223) >>> 0) / 2 ** 32);
+  const server = createState(map);
+  addTank(server, map, "me", "red");
+  addTank(server, map, "other", "blue");
+  server.powerBoxes = []; // no flares: only aimed shots
+  const queue = new InputQueue();
+  const predictor = new Predictor("me", config);
+  predictor.reconcile(cloneState(server), 0);
+  const inFlight: { at: number; frame: InputFrame }[] = [];
+  const snaps: { at: number; state: GameState; ack: number }[] = [];
+  const predicted: number[] = [];
+  const fired: number[] = [];
+  const applied: number[] = [];
+  let lastArrive = 0;
+  let pressesWithAim = 0;
+  let presses = 0;
+  for (let t = 0; t < 3600; t++) {
+    for (const s of snaps.filter((s) => s.at === t)) predictor.reconcile(s.state, s.ack);
+    // Taps at ~8/s with random gaps, and now and then a walk.
+    const phase = t % 300;
+    const input: TankInput = phase > 200 && phase < 260 ? { held: true, pressed: phase === 201 } : { held: false, pressed: rand() < 0.13 };
+    const { frame, events } = predictor.tick(input);
+    if (frame.pressed) {
+      presses++;
+      if (frame.aim !== undefined) pressesWithAim++;
+    }
+    const me = predictor.state!.tanks.find((x) => x.id === "me")!;
+    if (events.some((e) => e.type === "fire" && e.tankId === "me")) predicted.push(me.angle);
+    const stall = t % 120 >= 100 ? 120 - (t % 120) : 0; // 20 ticks (333 ms) of nothing
+    const arrive = Math.max(lastArrive, t + 2 + Math.floor(rand() * rand() * 12) + stall);
+    lastArrive = arrive;
+    inFlight.push({ at: arrive, frame });
+
+    const arrived = inFlight.filter((m) => m.at === t).map((m) => m.frame);
+    queue.push(arrived);
+    const before = queue.ack;
+    const mine = queue.next();
+    for (let i = 0; i < mine.length; i++) applied.push(before + 1 + i);
+    // Every bullet as it is fired (one fired next to a wall is gone by the end of the tick).
+    const bullets = server.bullets;
+    bullets.push = (...items) => {
+      for (const b of items) if (b.owner === "me") fired.push(Math.atan2(b.vy, b.vx));
+      return Array.prototype.push.apply(bullets, items);
+    };
+    step(server, map, { me: mine, other: { held: false, pressed: t % 50 === 0 } }, config);
+    if (server.tick % SNAPSHOT_EVERY_TICKS === 0) snaps.push({ at: t + 4, state: cloneState(server), ack: queue.ack });
+  }
+  return { predicted, fired, applied, queue, presses, pressesWithAim };
+}
+
+test("over a jittery, stalling uplink every shot leaves the server along the heading the shooter saw", () => {
+  for (const seed of [1, 2, 3]) {
+    const { predicted, fired, applied, queue, presses, pressesWithAim } = jitteryShots(seed);
+    assert.deepEqual(applied, Array.from({ length: applied.length }, (_, i) => i + 1), "every sample once, in order");
+    assert.equal(queue.dropped, 0);
+    assert.ok(presses > 100 && pressesWithAim === presses, `aim on ${pressesWithAim} of ${presses} presses`);
+    assert.ok(fired.length > 30, `${fired.length} shots`); // the magazine limits them
+    // The first shots may come before the first snapshot told the client where it really is.
+    const n = Math.min(predicted.length, fired.length);
+    let differ = 0;
+    for (let i = 0; i < n; i++) {
+      let d = Math.abs(predicted[i]! - fired[i]!) % (2 * Math.PI);
+      if (d > Math.PI) d = 2 * Math.PI - d;
+      if (d > 1e-9) differ++;
+    }
+    assert.equal(differ, 0, `seed ${seed}: ${differ} of ${n} shots in a different direction`);
+    assert.ok(Math.abs(predicted.length - fired.length) <= 1, `predicted ${predicted.length}, fired ${fired.length}`);
+  }
 });

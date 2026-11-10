@@ -1,5 +1,7 @@
 // End-to-end check against a running server: `npm run smoke -w server`.
 // Two bots go through the lobby, play, drop and rejoin, and leave.
+// TRANSPORT=udp: the game traffic of both goes over the UDP channel (botNet.ts), and it also
+// checks falling back to the WebSocket and back.
 import assert from "node:assert/strict";
 import { Client, type Room } from "@colyseus/sdk";
 import {
@@ -7,7 +9,6 @@ import {
   VOICE_BURST,
   VOICE_CONFIG_BURST,
   ROOM_NAME,
-  SnapshotDecoder,
   type RoomInfo,
   type Roster,
   type Snapshot,
@@ -16,6 +17,7 @@ import {
   type VoiceMessage,
 } from "@tank/shared";
 import { BotButton } from "./botButton";
+import { BotNet, TRANSPORT } from "./botNet";
 
 const url = process.env.SERVER_URL ?? "ws://localhost:2567";
 const http = url.replace(/^ws/, "http");
@@ -28,16 +30,24 @@ async function play(button: BotButton, ms: number) {
     await sleep(15);
   }
 }
-// Snapshots come as keyframes and deltas; decode them like the web client, asking for a
-// keyframe when a delta doesn't apply.
+// Snapshots come as keyframes and deltas; decode them like the web client (shared ClientNet),
+// over the WebSocket or, with TRANSPORT=udp, the UDP channel.
 function onSnapshots(room: Room, listener: (s: Snapshot) => void) {
-  const decoder = new SnapshotDecoder();
-  room.onMessage(MSG.snapshot, (msg: SnapshotMessage) => {
-    const snap = decoder.decode(msg);
-    if (snap) listener(snap);
-    else room.send(MSG.keyframe);
-  });
-  return decoder;
+  const link = new BotNet(room);
+  link.onSnapshot(listener);
+  const { wsDecoder: ws, udpDecoder: udp } = link.net;
+  return {
+    link,
+    get failures() {
+      return ws.failures + udp.failures;
+    },
+    get keyframes() {
+      return ws.keyframes + udp.keyframes;
+    },
+    get deltas() {
+      return ws.deltas + udp.deltas;
+    },
+  };
 }
 const teams = (r: Roster | undefined) => r?.players.map((p) => `${p.name}:${p.team}`).sort();
 
@@ -108,7 +118,13 @@ bob.send(MSG.team, { team: "red" });
 await sleep(150);
 assert.equal(annRosters.at(-1)?.players.find((p) => p.name === "Bob")?.team, "blue", "no team switching mid-match");
 
-const annButton = new BotButton(ann);
+// Ann's button goes the same way as Bob's snapshots (her own snapshots are ignored).
+const annLink = TRANSPORT === "udp" ? new BotNet(ann) : null;
+if (annLink) {
+  assert.ok(await annLink.waitOpen(), "Ann's UDP channel opens");
+  assert.ok(await bobDecoder.link.waitOpen(), "Bob's UDP channel opens");
+}
+const annButton = new BotButton(annLink ?? ann);
 await play(annButton, 200);
 
 // Tap: a single sample with pressed and not held still fires.
@@ -127,6 +143,37 @@ await play(annButton, 100);
 const moved = Math.hypot(annTank().x - start.x, annTank().y - start.y);
 assert.ok(moved > 30, `holding should walk, moved ${moved.toFixed(1)} px`);
 const lastAck = snaps.at(-1)!.acks[ann.sessionId] ?? 0;
+let udpNote = "";
+if (TRANSPORT === "udp") {
+  const net = bobDecoder.link.net;
+  assert.equal(net.transport, "udp");
+  assert.ok(net.stats.udpSnapshots > 20, `Bob's snapshots come over the channel (${net.stats.udpSnapshots})`);
+  const wsBefore = net.stats.wsSnapshots;
+  await sleep(300);
+  assert.ok(net.stats.wsSnapshots - wsBefore <= 1, "while on the channel, the WebSocket carries no snapshots");
+  // The channel drops: both fall back to the WebSocket without losing a tap.
+  annLink!.closeChannel(true);
+  bobDecoder.link.closeChannel(true);
+  const fallbackAt = snaps.length;
+  annButton.tap();
+  await play(annButton, 400);
+  assert.equal(net.transport, "ws");
+  assert.ok(net.stats.wsSnapshots - wsBefore > 5, "snapshots come over the WebSocket again");
+  assert.ok(snaps.slice(fallbackAt).some((s) => s.events.some((e) => e.type === "fire" && e.tankId === ann.sessionId)), "a tap right at the fallback fires");
+  // And back onto a new channel.
+  ann.send(MSG.rtc, { kind: "hello" });
+  bob.send(MSG.rtc, { kind: "hello" });
+  assert.ok((await annLink!.waitOpen()) && (await bobDecoder.link.waitOpen()), "a new channel opens");
+  const udpBefore = net.stats.udpSnapshots;
+  const backAt = snaps.length;
+  annButton.tap();
+  await play(annButton, 400);
+  assert.ok(net.stats.udpSnapshots - udpBefore > 5, "snapshots are back on the channel");
+  assert.ok(snaps.slice(backAt).some((s) => s.events.some((e) => e.type === "fire" && e.tankId === ann.sessionId)), "a tap right after switching back fires");
+  const ticks = snaps.map((s) => s.state.tick);
+  assert.ok(ticks.every((t, i) => i === 0 || t > ticks[i - 1]!), "each snapshot once, in order, across the switches");
+  udpNote = `, UDP channel: ${net.stats.udpSnapshots} snapshots over it, fell back to WebSocket and back with taps firing`;
+}
 assert.equal(bobDecoder.failures, 0, "every delta applied");
 assert.ok(bobDecoder.keyframes >= 1 && bobDecoder.deltas > bobDecoder.keyframes * 10, "mostly deltas after the first keyframe");
 assert.ok(lastAck > 40, `server should ack Ann's samples, last ack ${lastAck}`);
@@ -140,15 +187,18 @@ await sleep(300);
 assert.equal(annRosters.at(-1)?.players.find((p) => p.id === bobId)?.away, true, "Bob shows as away");
 // Ann starts decoding mid-stream: her first delta has no base, so she asks for a keyframe.
 const annSnaps: Snapshot[] = [];
+annLink?.dispose();
 const annDecoder = onSnapshots(ann, (s) => annSnaps.push(s));
-await sleep(250);
-assert.ok(annDecoder.failures >= 1 && annDecoder.keyframes >= 1, "a client without a base gets a keyframe on request");
+await sleep(TRANSPORT === "udp" ? 1500 : 250);
+if (TRANSPORT === "ws") assert.ok(annDecoder.link.net.wsDecoder.failures >= 1 && annDecoder.keyframes >= 1, "a client without a base gets a keyframe on request");
+else assert.ok(annDecoder.keyframes >= 1 && annSnaps.length > 10, "a new channel mid-match starts with a keyframe");
 assert.ok(annSnaps.at(-1)?.state.tanks.some((t) => t.id === bobId), "Bob's soldier stays in the game");
 
 const bobAgain = await new Client(url).reconnect(token);
 bobAgain.onMessage(MSG.roster, () => {});
 const bobAgainSnaps: Snapshot[] = [];
 const bobAgainDecoder = onSnapshots(bobAgain, (s) => bobAgainSnaps.push(s));
+if (TRANSPORT === "udp") assert.ok(await bobAgainDecoder.link.waitOpen(), "a reconnected player gets a new channel");
 await sleep(300);
 assert.equal(bobAgainDecoder.failures, 0, "a reconnected player starts with a keyframe");
 assert.ok(bobAgainSnaps.length > 5 && bobAgainDecoder.deltas > 0, "and then gets deltas");
@@ -156,6 +206,9 @@ assert.equal(bobAgain.sessionId, bobId, "rejoined as the same player");
 const back = annRosters.at(-1)?.players.find((p) => p.id === bobId);
 assert.deepEqual([back?.away, back?.team], [false, "blue"], "back on his team");
 
+bobDecoder.link.dispose();
+annDecoder.link.dispose();
+bobAgainDecoder.link.dispose();
 // The host leaves: the next player becomes host. Then everyone leaves.
 const roomId = ann.roomId;
 await ann.leave();
@@ -253,9 +306,9 @@ const voiceRoom = vee.roomId;
 await Promise.all([vee.leave(), wes.leave(), xan.leave()]);
 
 console.log(
-  `smoke ok: room ${roomId}, lobby (host, team switch, host move, start rules), ${rate} snapshots/s, ` +
+  `smoke ok (${TRANSPORT}): room ${roomId}, lobby (host, team switch, host move, start rules), ${rate} snapshots/s, ` +
     `teams locked in play, tap fired, walked ${moved.toFixed(0)} px, dropped player rejoined as the same soldier, ` +
-    `${bobDecoder.keyframes} keyframes + ${bobDecoder.deltas} deltas decoded; ` +
+    `${bobDecoder.keyframes} keyframes + ${bobDecoder.deltas} deltas decoded${udpNote}; ` +
     `voice relay in ${voiceRoom}: lobby open, match team-only, players can share voice with the other team, from stamped, oversized dropped, flood cut to ${flood}`,
 );
 process.exit(0);

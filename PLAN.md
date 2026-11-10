@@ -96,6 +96,14 @@ Gameplay details and tuning numbers live in [docs/GAMEPLAY.md](docs/GAMEPLAY.md)
   bullets or lasts 10 s (was every bullet for 14 s), so a shielded carrier can be stopped.
 - Smaller flags and bases (5 Nov 2026): `FLAG_RADIUS` 10 → 6, `BASE_RADIUS` 34 → 20; you take a
   flag by reaching it and score by standing on your stand, and both are drawn at those sizes.
+- Netcode rework (10 Nov 2026): gameplay over a UDP WebRTC data channel (inputs repeated until
+  acked, snapshots as deltas against the client's last acked state, events resent until acked),
+  WebSocket fallback. At 1-5% packet loss: no freeze over 100 ms (WebSocket: 0.45-1.7 s), every
+  tap fires. Server applies every input sample exactly once in order (late input pauses that
+  soldier, a backlog catches up 2 per tick): 0% of shots fire off the player's screen heading
+  (was 22-25% on jittery links). Aim sent with presses, lag compensation to 500 ms, hit zone
+  18 px. Compiled server build, docs/DEPLOY.md for AWS (t3.small, Elastic IP, UDP 40000-40100),
+  voice 16 kbps in matches and paused while the game connection struggles.
 - Hits and collisions online (9 Nov 2026): lag compensation (shots checked against enemies as
   the shooter saw them, up to 250 ms back), swept bullet hits, nearby players drawn at their
   present position so soldiers don't seem to walk through each other; beds bigger (108 px,

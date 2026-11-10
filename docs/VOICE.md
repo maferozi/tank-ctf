@@ -42,8 +42,16 @@ Open-mic voice chat between players, built into the room. Added 5 Nov 2026.
 - **Client** (`web/src/net/voice.ts`), owned by the room session (`session.ts`), so it keeps
   running from the lobby into the match and back:
   - **Mic** starts on your first tap, click or key press in the room (browsers need a gesture),
-    never on page load, with echo cancellation, noise suppression and auto gain, mono. If the mic
-    is denied or missing you still hear everyone ("Mic blocked"; tap the chip to try again).
+    never on page load, with echo cancellation, noise suppression and auto gain, mono. The tap on
+    "Create room" or "Join" counts (while the browser still treats it as a fresh gesture,
+    `navigator.userActivation.isActive`), so the mic normally comes on in the lobby, not with the
+    first tap of a match. If the mic is denied or missing you still hear everyone ("Mic
+    blocked"; tap the chip to try again).
+  - **Light first tap:** the tap itself only asks for the mic (`getUserMedia`, async) and resumes
+    playback. The AudioContext and the speaking meters are built afterwards, when the main thread
+    is idle (`requestIdleCallback`, at most 1 s later), so turning voice on can't stall a frame.
+    Browsers let that context run (Chrome: the page has had a tap; Safari: the mic is open); if it
+    starts suspended anyway, the next tap resumes it.
   - **Connections** use the "perfect negotiation" pattern. In each pair the player with the higher
     id is polite; the other one starts the connection, and on a clash the polite side gives way.
     Every connection has a number (`epoch`, set by the side that starts it), so messages for an
@@ -57,8 +65,9 @@ Open-mic voice chat between players, built into the room. Added 5 Nov 2026.
     later, by hanging up). The deadline doubles with each miss in a row, up to 60 s.
   - **If the browser can't do WebRTC** (no WebRTC, turned off, or it rejects the ICE config),
     voice switches off for the room ("No voice" on the chip) and the game carries on.
-  - **Speech-tuned Opus:** mono, at most 28 kbps (`RTCRtpSender.setParameters` and
-    `maxaveragebitrate`), in-band FEC on (hides lost packets), DTX on (next to nothing is sent
+  - **Speech-tuned Opus:** mono, at most 28 kbps in the lobby and 16 kbps during a match
+    (`RTCRtpSender.setParameters`, changed on each connection when the room's phase changes, no
+    renegotiation; the SDP's `maxaveragebitrate` asks the other side for at most 28), in-band FEC on (hides lost packets), DTX on (next to nothing is sent
     while you're quiet), written into each side's SDP (`tuneOpusSdp`).
   - **Playback** through one `<audio>` element per player, kept for that player across
     reconnects. If the browser refuses to play (autoplay rules; iOS Safari when your mic is off),
@@ -74,15 +83,26 @@ Open-mic voice chat between players, built into the room. Added 5 Nov 2026.
     back to it, voice starts again from your next tap.
 - **On screen:** a mic chip in the lobby (top right) and in a match (beside the room chip):
   mic off (before your first tap), connecting (only while the first try is under way; a player
-  who can't be reached doesn't keep it there), on (green, glows while you talk), muted, blocked,
+  who can't be reached doesn't keep it there), on (green, glows while you talk), muted, paused
+  (see `setGameStress` below), blocked,
   "Tap to hear", "No voice".
   Tap to mute or unmute; mute is remembered on the device. Lobby rows glow green while that
   player talks; in a match a green ring pulses round a talking teammate's name tag (drawn on the
   canvas; the renderer only reads the speaking set, nothing is added per frame). The first tap
   shows "Use headphones to avoid echo" once (dismissible, remembered).
 
+## Game first: `setGameStress`
+Voice must never make a struggling game connection worse. `session.voice.setGameStress(true)`
+stops sending your mic to everyone (`replaceTrack(null)` on every sender; connections stay up
+and you keep hearing everyone); `setGameStress(false)` puts it back. Only changes do anything, so
+the netcode can call it every frame with its current verdict (late snapshots, a reconnect).
+While paused the chip says "Mic paused" (muted look) and you don't glow as speaking;
+`voice.paused` is true and `window.__voice.paused` shows it in dev (try it from the console
+with `__voiceChat.setGameStress(true)`, dev builds only). Nothing calls it yet: the
+netcode will.
+
 ## Data use
-Opus at up to 28 kbps, near zero in silence. In a full lobby of 8 you send your voice to 7
+Opus at up to 28 kbps in the lobby and 16 kbps in a match, near zero in silence. In a full lobby of 8 you send your voice to 7
 players: at most about 200 kbps up and down while everyone talks, much less in practice. In a
 match only your teammates (at most 3 with 4 per team).
 
@@ -148,7 +168,7 @@ TURN has a free monthly allowance; check its current terms before relying on it.
   other team during a match.
 - Nobody else is involved: no media server, no recording. With a TURN relay the encrypted packets
   pass through Cloudflare (or our own TURN), which can't decrypt them.
-- The mic is only opened after your tap in a room, and stopped when you leave or close the page.
+- The mic is only opened after your tap to create or join a room (or a tap in it), and stopped when you leave or close the page.
 - Players in your voice group can see your IP address: it is in the ICE candidates the browsers
   swap to find a direct path, even when the audio ends up going through a relay.
 
@@ -171,7 +191,8 @@ TURN has a free monthly allowance; check its current terms before relying on it.
 - **One player can't connect to anyone:** a strict network; configure TURN (above).
 - **Dev stats:** in a dev build, `window.__voice` in the browser console shows your mic state, the
   relay setting, who is speaking, and per peer the connection state, bytes sent and received,
-  round trip time, whether it goes through a relay, `level` (how loud they are reaching you, RMS;
+  round trip time, whether it goes through a relay, `maxBitrate` (our encoder cap toward them:
+  28000 in the lobby, 16000 in a match), `sending` (our mic is on that connection), `level` (how loud they are reaching you, RMS;
   talking counts above 0.012) and `playing` (their audio element is playing). Refreshed every 2 s.
 - **Testing with Chrome's fake mic:** `--use-fake-device-for-media-stream` gives every browser the
   same beep, and each page's echo canceller then removes much of its own mic (it matches what it
