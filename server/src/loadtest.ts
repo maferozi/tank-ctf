@@ -12,11 +12,15 @@
 // and replays each bot's snapshot arrivals through the client's smoothing timeline (the
 // old fixed 100 ms delay and the current adaptive one) to count frames where other players
 // would stand still. Works against old servers that send `{ state }` snapshots too.
+// TRANSPORT=udp: bots use the UDP game channel (see botNet.ts), with UDP_LOSS / UDP_DELAY_MS /
+// UDP_JITTER_MS shaping what they send (start the server with the same values for the other
+// direction). The report then counts channel messages skipped instead of failed deltas.
 import { Client, type Room } from "@colyseus/sdk";
-import { MAX_PLAYERS, MSG, ROOM_NAME, SnapshotDecoder, TICK_MS, type Snapshot, type SnapshotMessage } from "@tank/shared";
+import { MAX_PLAYERS, MSG, ROOM_NAME, TICK_MS, type Snapshot, type SnapshotMessage } from "@tank/shared";
 import { writeFileSync } from "node:fs";
 import { pack } from "msgpackr";
 import { BotButton } from "./botButton";
+import { BotNet, TRANSPORT } from "./botNet";
 
 const url = process.env.SERVER_URL ?? "ws://localhost:2567";
 const PLAYERS = Number(process.env.PLAYERS ?? 8);
@@ -33,12 +37,15 @@ interface BotStats {
   intervals: number[]; // ms between snapshot arrivals
   pressLatencies: number[]; // ms from sending a tap to seeing its shot in a snapshot
   pressTimeouts: number;
+  tapApplied: number[]; // ms from a tap's sample to a snapshot acking it (the server applied it)
   firstTick?: { tick: number; at: number };
   lastTick?: { tick: number; at: number };
   deltaBytes: number[]; // msgpack size of each message as sent
   keyBytes: number[];
   fullBytes: number[]; // what a full snapshot would have been (sampled)
   decodeFailures: number;
+  udpBytes: number;
+  udpMessages: number;
   tickHashes: Map<number, string>; // for comparing what different players saw
   arrivals: { at: number; tick: number }[]; // every decoded snapshot, for the timeline replay
   maxBullets: number;
@@ -49,15 +56,18 @@ class Bot {
     intervals: [],
     pressLatencies: [],
     pressTimeouts: 0,
+    tapApplied: [],
     deltaBytes: [],
     keyBytes: [],
     fullBytes: [],
     decodeFailures: 0,
+    udpBytes: 0,
+    udpMessages: 0,
     tickHashes: new Map(),
     arrivals: [],
     maxBullets: 0,
   };
-  private decoder = new SnapshotDecoder();
+  readonly link: BotNet;
   private nextKeyRequest = performance.now() + rand(KEYFRAME_REQUEST_MS[0]!, KEYFRAME_REQUEST_MS[1]!);
   private lastArrival = 0;
   private pendingPressAt: number | null = null;
@@ -68,30 +78,35 @@ class Bot {
   private legacy = false; // old server: plain `{ state, events, acks }` snapshots, no keyframe requests
 
   constructor(public room: Room) {
-    this.button = new BotButton(room);
+    this.link = new BotNet(room);
+    this.button = new BotButton(this.link);
     room.onMessage(MSG.roster, () => {});
     room.onMessage(MSG.voiceConfig, () => {});
-    room.onMessage(MSG.snapshot, (msg: SnapshotMessage) => this.onMessage(msg));
+    // Sizes as sent over the WebSocket; decoding happens in BotNet (shared ClientNet).
+    room.onMessage(MSG.snapshot, (msg: SnapshotMessage | Snapshot) => {
+      if ("state" in msg) {
+        this.legacy = true;
+        this.stats.keyBytes.push(pack(msg).length);
+        this.onSnapshot(msg);
+        return;
+      }
+      (msg.full ? this.stats.keyBytes : this.stats.deltaBytes).push(pack(msg).length);
+    });
+    this.link.onSnapshot((snap) => this.onSnapshot(snap));
   }
 
-  private onMessage(msg: SnapshotMessage | Snapshot) {
-    if ("state" in msg) {
-      this.legacy = true;
-      this.stats.keyBytes.push(pack(msg).length);
-      this.onSnapshot(msg);
-      return;
-    }
-    (msg.full ? this.stats.keyBytes : this.stats.deltaBytes).push(pack(msg).length);
-    const snap = this.decoder.decode(msg);
-    if (!snap) {
-      this.stats.decodeFailures++;
-      this.room.send(MSG.keyframe);
-      return;
-    }
-    this.onSnapshot(snap);
+  // Skipped channel messages (no base, late) on UDP; deltas that failed on the WebSocket.
+  collect() {
+    const n = this.link.net;
+    this.stats.decodeFailures = n.wsDecoder.failures + n.udpDecoder.failures;
+    this.stats.udpBytes = n.stats.bytesIn;
+    this.stats.udpMessages = n.stats.udpIn;
   }
+
+  stopped = false;
 
   private onSnapshot(snap: Snapshot) {
+    if (this.stopped) return;
     const now = performance.now();
     if (this.lastArrival) this.stats.intervals.push(now - this.lastArrival);
     this.lastArrival = now;
@@ -102,6 +117,9 @@ class Bot {
     this.stats.maxBullets = Math.max(this.stats.maxBullets, snap.state.bullets.length);
     if (snap.state.tick % 30 === 0) this.stats.fullBytes.push(pack({ full: snap.state, events: snap.events, acks: snap.acks }).length);
     this.stats.tickHashes.set(snap.state.tick, JSON.stringify(snap.state));
+    const ack = snap.acks[this.room.sessionId] ?? 0;
+    const taps = this.button.taps;
+    while (taps.length && taps[0]!.seq <= ack) this.stats.tapApplied.push(now - taps.shift()!.at);
     const me = snap.state.tanks.find((t) => t.id === this.room.sessionId);
     if (me) this.ammo = me.ammo;
     if (this.pendingPressAt !== null) {
@@ -117,7 +135,7 @@ class Bot {
 
   // Random play: short taps (measured) and walks of 0.2-0.9 s.
   act(now: number) {
-    if (now >= this.nextKeyRequest && !this.legacy) {
+    if (now >= this.nextKeyRequest && !this.legacy && this.link.net.transport === "ws") {
       this.room.send(MSG.keyframe);
       this.nextKeyRequest = now + rand(KEYFRAME_REQUEST_MS[0]!, KEYFRAME_REQUEST_MS[1]!);
     }
@@ -260,6 +278,8 @@ for (let i = 2; i <= PLAYERS; i++) {
   const room = await new Client(url).joinById(first.roomId, { name: `Bot${i}`, team: i % 2 ? "red" : "blue" });
   bots.push(new Bot(room));
 }
+// TRANSPORT=udp: wait for every bot's channel before starting.
+const onUdp = (await Promise.all(bots.map((b) => b.link.waitOpen()))).filter(Boolean).length;
 // Rooms start in the lobby; the first bot is the host and starts the match.
 first.send(MSG.start);
 await sleep(300);
@@ -286,16 +306,36 @@ while (performance.now() < end) {
   for (const bot of bots) bot.act(now);
   await sleep(20);
 }
+// Stop measuring before tearing down (closing the channels sends the last snapshots over the WebSocket).
+for (const b of bots) b.stopped = true;
+const stillOnUdp = bots.filter((b) => b.link.net.transport === "udp").length;
+const fallbacks = bots.reduce((n, b) => n + b.link.net.stats.fallbacks, 0);
+const udpSkips = bots.map((b) => ({ noBase: b.link.net.udpDecoder.noBase, stale: b.link.net.udpDecoder.stale, keyframes: b.link.net.udpDecoder.keyframes, deltas: b.link.net.udpDecoder.deltas }));
+const keyframeRequests = bots.reduce((n, b) => n + b.link.net.wsDecoder.failures, 0);
+for (const b of bots) b.collect();
+bots.forEach((b) => b.link.dispose());
 await Promise.all(bots.map((b) => b.room.leave()));
 
 // Report
 const all = (pick: (s: BotStats) => number[]) => bots.flatMap((b) => pick(b.stats));
 const intervals = all((s) => s.intervals);
 const latencies = all((s) => s.pressLatencies);
+const tapApplied = all((s) => s.tapApplied);
 const deltaBytes = all((s) => s.deltaBytes);
 const keyBytes = all((s) => s.keyBytes);
 const fullBytes = all((s) => s.fullBytes);
 const decodeFailures = bots.reduce((n, b) => n + b.stats.decodeFailures, 0);
+// Snapshots a bot never got to use (lost, skipped or late), from the ticks it did get.
+const notShown = bots.reduce((n, b) => {
+  const a = b.stats.arrivals;
+  let missing = 0;
+  for (let i = 1; i < a.length; i++) if (a[i]!.tick > a[i - 1]!.tick) missing += Math.max(0, (a[i]!.tick - a[i - 1]!.tick) / 2 - 1);
+  return n + missing;
+}, 0);
+const shown = bots.reduce((n, b) => n + b.stats.arrivals.length, 0);
+const udpBytes = bots.reduce((n, b) => n + b.stats.udpBytes, 0);
+const udpMessages = bots.reduce((n, b) => n + b.stats.udpMessages, 0);
+const sumUdp = (k: "noBase" | "stale" | "keyframes" | "deltas") => udpSkips.reduce((n, u) => n + u[k], 0);
 const tickRates = bots.map((b) => {
   const { firstTick: a, lastTick: z } = b.stats;
   return a && z ? ((z.tick - a.tick) * 1000) / (z.at - a.at) : NaN;
@@ -346,9 +386,12 @@ Server ticks:        ${f(Math.min(...tickRates))}-${f(Math.max(...tickRates))} p
 Snapshots:           ${f(Math.min(...snapRates))}-${f(Math.max(...snapRates))} per second per player (target 30)
 Snapshot gaps:       median ${f(pct(intervals, 50))} ms, p95 ${f(pct(intervals, 95))} ms, p99 ${f(pct(intervals, 99))} ms, max ${f(Math.max(...intervals))} ms
 Press -> shot seen:  median ${f(pct(latencies, 50))} ms, p95 ${f(pct(latencies, 95))} ms, max ${f(Math.max(...latencies))} ms (${latencies.length} taps, ${timeouts} without a shot)
-Snapshot size:       ~${kb(sentBytes)} on average, so ~${((sentBytes * 30) / 1024).toFixed(1)} KB/s down per player
+Tap -> applied seen: median ${f(pct(tapApplied, 50))} ms, p95 ${f(pct(tapApplied, 95))} ms, max ${f(Math.max(...tapApplied))} ms (${tapApplied.length} taps; until a snapshot acks the tap's sample)
+Snapshot size:       ${TRANSPORT === "udp" ? `channel ~${kb(udpBytes / Math.max(1, udpMessages))} per message (keepalives included); WebSocket:` : ""} ~${kb(sentBytes)} on average, so ~${((sentBytes * 30) / 1024).toFixed(1)} KB/s down per player
                      deltas ${kb(avg(deltaBytes))} (${deltaBytes.length}), keyframes ${kb(avg(keyBytes))} (${keyBytes.length}), full state would be ${kb(avg(fullBytes))}
-Deltas that failed:  ${decodeFailures}
+Transport:           ${TRANSPORT}${TRANSPORT === "udp" ? `: ${onUdp}/${bots.length} channels opened, ${stillOnUdp} still on it at the end, ${fallbacks} fallbacks to WebSocket` : ""}
+Snapshots not shown: ${notShown} of ${notShown + shown} (${f((100 * notShown) / Math.max(1, notShown + shown))}%: lost, skipped or late)
+Deltas that failed:  ${decodeFailures}${TRANSPORT === "udp" ? `; channel: ${sumUdp("keyframes")} keyframes + ${sumUdp("deltas")} deltas decoded, skipped ${sumUdp("noBase")} without base + ${sumUdp("stale")} late, avg ${f(udpBytes / Math.max(1, udpMessages))} B per message` : `; keyframe requests after a failed delta: ${keyframeRequests}`}
 Same game for all:   ${compared} tick states compared, ${mismatched} differed
 Mode:                ${HEAVY_FIRE ? "heavy fire" : "normal"}, up to ${maxBullets} bullets in flight
 Gaps > 100 / 200 ms: ${sum((b) => b.over100)} / ${sum((b) => b.over200)} (all bots), longest ${f(maxOf((b) => b.max))} ms
@@ -370,9 +413,17 @@ if (REPORT_JSON) {
         over100: sum((b) => b.over100),
         over200: sum((b) => b.over200),
         press: { median: pct(latencies, 50), p95: pct(latencies, 95), n: latencies.length, timeouts },
+        tapApplied: { median: pct(tapApplied, 50), p95: pct(tapApplied, 95), max: Math.max(...tapApplied), n: tapApplied.length },
         bytes: { avg: sentBytes, delta: avg(deltaBytes), key: avg(keyBytes), full: avg(fullBytes) },
         maxBullets,
         decodeFailures,
+        transport: TRANSPORT,
+        onUdp,
+        stillOnUdp,
+        fallbacks,
+        notShown,
+        shown,
+        udp: { keyframes: sumUdp("keyframes"), deltas: sumUdp("deltas"), noBase: sumUdp("noBase"), stale: sumUdp("stale"), avgBytes: udpBytes / Math.max(1, udpMessages) },
         compared,
         mismatched,
         fixed100: { starvedPct: starvedPct((b) => b.fixed100), longest: maxOf((b) => b.fixed100.longestFreezeMs), over100: sum((b) => b.fixed100.freezesOver100) },

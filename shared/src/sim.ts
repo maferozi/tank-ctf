@@ -22,6 +22,8 @@ import {
   HIT_KNOCKBACK,
   MAX_AMMO,
   MAX_REWIND_TICKS,
+  AIM_TOLERANCE,
+  TANK_HIT_RADIUS,
   POWER_BOX_SIZE,
   POWER_RESPAWN_MAX_MS,
   POWER_RESPAWN_MIN_MS,
@@ -60,7 +62,10 @@ export interface Tank {
   angle: number;
   spinDir: 1 | -1; // flips on every press
   spinPauseMs: number; // heading is held still until this runs out
-  lastPressTick: number; // tick of the last press that fired
+  // The soldier's own clock: updates (input samples) since the last press that fired. Not
+  // the world tick, so a burst plays out the same on the server as on the shooter's screen
+  // even when the server applies their samples unevenly (see step()).
+  sincePressTicks: number;
   aimAngle: number; // heading of the first shot in the current burst
   held: boolean;
   pressMs: number; // how long the current press has lasted
@@ -94,7 +99,8 @@ export interface Bullet {
   vy: number;
   rangeLeft: number; // px left before the bullet drops
   // Lag compensation: how many ticks behind the present the shooter saw other players when
-  // firing. Hits on enemies are checked against where they were that long ago.
+  // firing (the tick it fired on minus the press's `seen`). Hits on enemies are checked
+  // against where they were that long ago.
   rewind: number;
 }
 
@@ -159,19 +165,29 @@ export interface GameState {
   events: GameEvent[]; // events produced by the last step only
 }
 
-// One tick of input for one tank. `pressed` is true if a press started since the
-// previous tick, so a press and release inside the same tick still counts as a tap.
+// One sample of one player's button: one update of their soldier. `pressed` is true if a
+// press started since the previous sample, so a press and release inside the same sample
+// still counts as a tap.
 export interface TankInput {
   held: boolean;
   pressed: boolean;
-  // Not a real sample: the server ran out of this player's input and repeats the last held
-  // state. It doesn't add hold time, so a late packet can't turn a tap into a walk.
-  stale?: boolean;
-  // With a press: how many ticks behind the present this player sees the others (online, they
-  // are drawn a little in the past). The shot is checked against them as seen. 0 or absent:
-  // no rewind (solo, bots).
-  view?: number;
+  // With a press, online: the heading the shooter's own prediction fired along (radians). The
+  // shot goes exactly along it when it is within AIM_TOLERANCE of the soldier's heading here,
+  // so the bullet leaves where the shooter saw it leave. Absent: the soldier's own heading.
+  aim?: number;
+  // With a press, online: the server tick of the other players as the shooter's screen drew
+  // them (they are drawn a little in the past). Hits are checked against them as seen, at
+  // most MAX_REWIND_TICKS back. Absent: no rewind (solo, bots).
+  seen?: number;
 }
+
+// Each player's samples for one tick. A single sample (or none: an idle button) updates the
+// soldier once, as solo play and prediction always do. A list updates it once per sample,
+// in order: the server passes [] when a player's sample hasn't arrived (the soldier is
+// frozen for the tick: no turning, walking or timers, though it can still be pushed and
+// shot) and two samples to catch up after a late burst. So every soldier goes through
+// exactly the samples its player's prediction went through.
+export type TickInputs = Record<string, TankInput | readonly TankInput[]>;
 
 export interface SimConfig {
   holdMs: number;
@@ -262,7 +278,7 @@ export function addTank(state: GameState, map: GameMap, id: string, team: Team):
     angle: 0,
     spinDir: -1, // counter-clockwise on screen, like the original
     spinPauseMs: 0,
-    lastPressTick: -1e9, // finite so the state stays JSON/network safe
+    sincePressTicks: NEVER_PRESSED,
     aimAngle: 0,
     held: false,
     pressMs: 0,
@@ -303,13 +319,18 @@ function placeAtSpawn(tank: Tank, map: GameMap): void {
 }
 
 const NO_INPUT: TankInput = { held: false, pressed: false };
+const NEVER_PRESSED = 1e9; // finite so the state stays JSON/network safe
+
+function isList(v: TankInput | readonly TankInput[]): v is readonly TankInput[] {
+  return Array.isArray(v);
+}
 
 // Advances the state by one tick in place. Deterministic: the same state, inputs
 // and config always give the same result, so the server and client prediction agree.
 export function step(
   state: GameState,
   map: GameMap,
-  inputs: Record<string, TankInput>,
+  inputs: TickInputs,
   config: SimConfig,
 ): void {
   const dt = TICK_MS / 1000;
@@ -327,88 +348,21 @@ export function step(
     return;
   }
 
+  // Bullets fired by a soldier's earlier sample in a tick where it gets two: the shooter's
+  // screen moved them on with the next sample, so they get the extra move too.
+  let ahead: Bullet[] | null = null;
   for (const tank of state.tanks) {
-    if (!tank.alive) {
-      slideBody(tank, map, dt);
-      tank.respawnMs -= TICK_MS;
-      if (tank.respawnMs <= 0) {
-        placeAtSpawn(tank, map);
-        tank.alive = true;
-        tank.cooldownMs = 0;
-        tank.ammo = MAX_AMMO;
-        tank.reloadMs = 0;
-        tank.vx = tank.vy = 0;
-        tank.spawnShieldMs = SPAWN_SHIELD_MS;
+    const given = inputs[tank.id];
+    if (given === undefined) updateTank(state, map, tank, NO_INPUT, config, dt);
+    else if (!isList(given)) updateTank(state, map, tank, given, config, dt);
+    else {
+      for (let i = 0; i < given.length; i++) {
+        const before = state.bullets.length;
+        updateTank(state, map, tank, given[i]!, config, dt);
+        for (let k = before; k < state.bullets.length; k++) {
+          for (let extra = i + 1; extra < given.length; extra++) (ahead ??= []).push(state.bullets[k]!);
+        }
       }
-      tank.held = false;
-      tank.pressMs = 0;
-      tank.driving = false;
-      tank.driveMs = 0;
-      continue;
-    }
-
-    const input = inputs[tank.id] ?? NO_INPUT;
-    tank.cooldownMs = Math.max(0, tank.cooldownMs - TICK_MS);
-    if (tank.ammo < MAX_AMMO) {
-      tank.reloadMs += TICK_MS;
-      // Epsilon: summing TICK_MS (1000/60) can land a hair under a whole RELOAD_MS.
-      if (tank.reloadMs >= RELOAD_MS - 1e-6) {
-        tank.ammo++;
-        tank.reloadMs -= RELOAD_MS;
-      }
-    } else {
-      tank.reloadMs = 0;
-    }
-    tickPowers(state, tank);
-
-    // A press fires straight away and reverses the spin. A press inside the bounce guard
-    // (FIRE_COOLDOWN_MS) does nothing at all: flipping on those made a fast spray swing to
-    // one side. With an empty magazine a press still reverses the spin (see below).
-    const pressStarted = input.pressed || (input.held && !tank.held);
-    if (pressStarted) {
-      if (canFire(tank)) {
-        const sinceLastShot = (state.tick - tank.lastPressTick) * TICK_MS;
-        if (sinceLastShot <= RAPID_FIRE_MS) tank.angle = clampAround(tank.angle, tank.aimAngle, RAPID_FIRE_WOBBLE);
-        else tank.aimAngle = tank.angle;
-        tank.lastPressTick = state.tick;
-        fire(state, tank, rewindTicks(input.view));
-        tank.spinDir = tank.spinDir === 1 ? -1 : 1;
-        tank.spinPauseMs = SPIN_PAUSE_MS;
-      } else if (tank.cooldownMs <= 0) {
-        // Empty magazine: a dry click, but the gun still reverses, so you can keep turning
-        // to aim while you wait for a round (Asad's call). Only bounce-guard taps don't flip.
-        state.events.push({ type: "dry", tankId: tank.id, x: tank.x, y: tank.y });
-        tank.spinDir = tank.spinDir === 1 ? -1 : 1;
-        tank.spinPauseMs = SPIN_PAUSE_MS;
-      }
-      tank.pressMs = 0;
-      tank.driving = false;
-    }
-
-    if (input.held) {
-      // A stale sample (the server ran out of this player's input) doesn't count as holding
-      // longer: otherwise a short tap held over a late packet turned into a walk.
-      if (!input.stale) tank.pressMs += TICK_MS;
-      if (tank.pressMs >= config.holdMs) tank.driving = true;
-    } else {
-      tank.pressMs = 0;
-      tank.driving = false;
-    }
-    tank.held = input.held;
-
-    if (tank.driving) {
-      tank.driveMs += TICK_MS;
-      const dist = currentWalkSpeed(state, tank) * dt;
-      const move = gripBoxFace(state, tank, Math.cos(tank.angle) * dist, Math.sin(tank.angle) * dist);
-      shove(tankBody(tank), map, move.x, move.y);
-    } else {
-      tank.driveMs = 0;
-      // While the button is down the heading stays put, so a hold walks exactly where you
-      // pressed (DEFAULT_HOLD_MS is longer than the pause after a shot).
-      if (tank.held) {
-        // holding still
-      } else if (tank.spinPauseMs > 0) tank.spinPauseMs -= TICK_MS;
-      else tank.angle = wrapAngle(tank.angle + tank.spinDir * SPIN_SPEED * dt);
     }
   }
 
@@ -417,7 +371,111 @@ export function step(
   collectPowerBoxes(state);
   pushBodies(state, map);
   stepBullets(state, map, dt, config);
+  if (ahead) {
+    const gone = new Set<Bullet>();
+    for (const b of ahead) if (!gone.has(b) && state.bullets.includes(b) && !moveBullet(state, map, dt, config, b, 1)) gone.add(b);
+    if (gone.size) state.bullets = state.bullets.filter((b) => !gone.has(b));
+  }
   tickFlags(state);
+}
+
+// One update of one soldier from one input sample: its timers, powers, firing, spin and walk.
+function updateTank(state: GameState, map: GameMap, tank: Tank, input: TankInput, config: SimConfig, dt: number): void {
+  tank.sincePressTicks = Math.min(NEVER_PRESSED, tank.sincePressTicks + 1);
+  if (!tank.alive) {
+    slideBody(tank, map, dt);
+    tank.respawnMs -= TICK_MS;
+    if (tank.respawnMs <= 0) {
+      placeAtSpawn(tank, map);
+      tank.alive = true;
+      tank.cooldownMs = 0;
+      tank.ammo = MAX_AMMO;
+      tank.reloadMs = 0;
+      tank.vx = tank.vy = 0;
+      tank.spawnShieldMs = SPAWN_SHIELD_MS;
+    }
+    tank.held = false;
+    tank.pressMs = 0;
+    tank.driving = false;
+    tank.driveMs = 0;
+    return;
+  }
+
+  tank.cooldownMs = Math.max(0, tank.cooldownMs - TICK_MS);
+  if (tank.ammo < MAX_AMMO) {
+    tank.reloadMs += TICK_MS;
+    // Epsilon: summing TICK_MS (1000/60) can land a hair under a whole RELOAD_MS.
+    if (tank.reloadMs >= RELOAD_MS - 1e-6) {
+      tank.ammo++;
+      tank.reloadMs -= RELOAD_MS;
+    }
+  } else {
+    tank.reloadMs = 0;
+  }
+  tickPowers(state, tank);
+
+  // A press fires straight away and reverses the spin. A press inside the bounce guard
+  // (FIRE_COOLDOWN_MS) does nothing at all: flipping on those made a fast spray swing to
+  // one side. With an empty magazine a press still reverses the spin (see below).
+  const pressStarted = input.pressed || (input.held && !tank.held);
+  if (pressStarted) {
+    if (canFire(tank)) {
+      const burst = tank.sincePressTicks * TICK_MS <= RAPID_FIRE_MS;
+      if (burst) tank.angle = clampAround(tank.angle, tank.aimAngle, RAPID_FIRE_WOBBLE);
+      applyAim(tank, input.aim);
+      if (!burst) tank.aimAngle = tank.angle;
+      tank.sincePressTicks = 0;
+      fire(state, tank, rewindTicks(state, input.seen));
+      tank.spinDir = tank.spinDir === 1 ? -1 : 1;
+      tank.spinPauseMs = SPIN_PAUSE_MS;
+    } else if (tank.cooldownMs <= 0) {
+      // Empty magazine: a dry click, but the gun still reverses, so you can keep turning
+      // to aim while you wait for a round (Asad's call). Only bounce-guard taps don't flip.
+      applyAim(tank, input.aim);
+      state.events.push({ type: "dry", tankId: tank.id, x: tank.x, y: tank.y });
+      tank.spinDir = tank.spinDir === 1 ? -1 : 1;
+      tank.spinPauseMs = SPIN_PAUSE_MS;
+    }
+    tank.pressMs = 0;
+    tank.driving = false;
+  }
+
+  if (input.held) {
+    tank.pressMs += TICK_MS;
+    if (tank.pressMs >= config.holdMs) tank.driving = true;
+  } else {
+    tank.pressMs = 0;
+    tank.driving = false;
+  }
+  tank.held = input.held;
+
+  if (tank.driving) {
+    tank.driveMs += TICK_MS;
+    const dist = currentWalkSpeed(state, tank) * dt;
+    const move = gripBoxFace(state, tank, Math.cos(tank.angle) * dist, Math.sin(tank.angle) * dist);
+    shove(tankBody(tank), map, move.x, move.y);
+  } else {
+    tank.driveMs = 0;
+    // While the button is down the heading stays put, so a hold walks exactly where you
+    // pressed (DEFAULT_HOLD_MS is longer than the pause after a shot).
+    if (tank.held) {
+      // holding still
+    } else if (tank.spinPauseMs > 0) tank.spinPauseMs -= TICK_MS;
+    else tank.angle = wrapAngle(tank.angle + tank.spinDir * SPIN_SPEED * dt);
+  }
+}
+
+// Online, a press carries the heading the shooter's prediction fired along. Within
+// AIM_TOLERANCE of this soldier's heading, take it exactly; anything else (junk, or a
+// heading far from what the server has) is ignored.
+function applyAim(tank: Tank, aim: unknown): void {
+  if (typeof aim !== "number" || !Number.isFinite(aim)) return;
+  const TAU = Math.PI * 2;
+  // Already 0..2π (always, from a real client): keep it bit for bit.
+  const a = aim >= 0 && aim < TAU ? aim : wrapAngle(aim);
+  let d = a - tank.angle;
+  d -= Math.round(d / TAU) * TAU;
+  if (Math.abs(d) <= AIM_TOLERANCE) tank.angle = a;
 }
 
 // Walking into the face of a crate, desk, bed or (solid) power box: the soldier grips the face
@@ -521,6 +579,7 @@ export function resetRound(state: GameState, map: GameMap): void {
       ammo: MAX_AMMO,
       reloadMs: 0,
       spinPauseMs: 0,
+      sincePressTicks: NEVER_PRESSED,
       vx: 0,
       vy: 0,
       spawnShieldMs: 0,
@@ -690,10 +749,11 @@ function segmentHitsCircle(ax: number, ay: number, bx: number, by: number, cx: n
   return px * px + py * py <= r * r;
 }
 
-// A client's claimed view lag, made safe: whole ticks within 0..MAX_REWIND_TICKS.
-function rewindTicks(view: unknown): number {
-  if (typeof view !== "number" || !Number.isFinite(view)) return 0;
-  return Math.max(0, Math.min(MAX_REWIND_TICKS, Math.round(view)));
+// How far back the shooter saw the others: this tick minus the tick their screen drew
+// (`seen`), made safe: whole ticks within 0..MAX_REWIND_TICKS. Junk or a future tick: 0.
+function rewindTicks(state: GameState, seen: unknown): number {
+  if (typeof seen !== "number" || !Number.isFinite(seen)) return 0;
+  return Math.max(0, Math.min(MAX_REWIND_TICKS, state.tick - Math.round(seen)));
 }
 
 function spawnBullet(state: GameState, tank: Tank, angle: number, rewind = 0): void {
@@ -717,70 +777,76 @@ function spawnBullet(state: GameState, tank: Tank, angle: number, rewind = 0): v
 }
 
 function stepBullets(state: GameState, map: GameMap, dt: number, config: SimConfig): void {
-  const hitR = TANK_RADIUS + BULLET_RADIUS;
-  state.bullets = state.bullets.filter((b) => {
-    const fromX = b.x;
-    const fromY = b.y;
-    b.x += b.vx * dt;
-    b.y += b.vy * dt;
-    b.rangeLeft -= BULLET_SPEED * dt;
-    if (circleHitsWall(map, b.x, b.y, BULLET_RADIUS)) return false;
-    const bulletBody: Body = { pos: b, shape: "circle", size: BULLET_RADIUS, mass: 0 };
-    // Crates and power boxes stop bullets (shooting a power box does not take it). With
-    // CRATE_BREAKS a crate breaks when shot; beds and desks don't.
-    const crate = state.crates.find((c) => contact(bulletBody, crateBody(c)));
-    if (crate && CRATE_BREAKS && !crate.bed && !crate.desk) {
-      state.crates = state.crates.filter((c) => c !== crate);
-      state.events.push({ type: "crateBreak", tankId: b.owner, x: crate.x, y: crate.y });
-      return false;
-    }
-    const blocked = crate || solidPowerBoxes(state).some((p) => contact(bulletBody, powerBoxBody(p)));
-    if (blocked) {
-      state.events.push({ type: "drop", tankId: b.owner, x: b.x, y: b.y });
-      return false;
-    }
+  state.bullets = state.bullets.filter((b) => moveBullet(state, map, dt, config, b, 0));
+}
 
-    // A fallen soldier's body is cover for their own team: it stops the other team's
-    // bullets until they respawn, while their teammates shoot straight through it.
-    const body = state.tanks.find((t) => !t.alive && t.team !== b.team && (t.x - b.x) ** 2 + (t.y - b.y) ** 2 <= hitR * hitR);
-    if (body) {
-      state.events.push({ type: "drop", tankId: b.owner, x: b.x, y: b.y });
-      return false;
-    }
+// Moves one bullet one tick and resolves what it hits; false when it is gone. `later` is
+// how many ticks ahead of the world this move is (1 for a bullet's catch-up move, see step()).
+function moveBullet(state: GameState, map: GameMap, dt: number, config: SimConfig, b: Bullet, later: number): boolean {
+  // TANK_HIT_RADIUS, not TANK_RADIUS: hits match the drawn body, a bit bigger than its
+  // collision circle.
+  const hitR = TANK_HIT_RADIUS + BULLET_RADIUS;
+  const fromX = b.x;
+  const fromY = b.y;
+  b.x += b.vx * dt;
+  b.y += b.vy * dt;
+  b.rangeLeft -= BULLET_SPEED * dt;
+  if (circleHitsWall(map, b.x, b.y, BULLET_RADIUS)) return false;
+  const bulletBody: Body = { pos: b, shape: "circle", size: BULLET_RADIUS, mass: 0 };
+  // Crates and power boxes stop bullets (shooting a power box does not take it). With
+  // CRATE_BREAKS a crate breaks when shot; beds and desks don't.
+  const crate = state.crates.find((c) => contact(bulletBody, crateBody(c)));
+  if (crate && CRATE_BREAKS && !crate.bed && !crate.desk) {
+    state.crates = state.crates.filter((c) => c !== crate);
+    state.events.push({ type: "crateBreak", tankId: b.owner, x: crate.x, y: crate.y });
+    return false;
+  }
+  const blocked = crate || solidPowerBoxes(state).some((p) => contact(bulletBody, powerBoxBody(p)));
+  if (blocked) {
+    state.events.push({ type: "drop", tankId: b.owner, x: b.x, y: b.y });
+    return false;
+  }
 
-    for (const t of state.tanks) {
-      if (!t.alive || t.id === b.owner || t.team === b.team) continue;
-      // Where the shooter saw this enemy (lag compensation), else where it is now.
-      const seen = (b.rewind > 0 && config.rewind?.(t.id, state.tick - b.rewind)) || t;
-      // The whole stretch the bullet flew this tick, not just where it ended: at 10 px a
-      // tick it could otherwise skip past the edge of a soldier.
-      if (segmentHitsCircle(fromX, fromY, b.x, b.y, seen.x, seen.y, hitR)) {
-        if (t.spawnShieldMs > 0) {
-          state.events.push({ type: "shieldHit", tankId: t.id, x: b.x, y: b.y });
-          return false;
-        }
-        if (t.shieldMs > 0) {
-          // Each bullet uses up one hit; the last one pops the shield.
-          t.shieldHits--;
-          if (t.shieldHits <= 0) {
-            t.shieldMs = 0;
-            t.shieldHits = 0;
-            state.events.push({ type: "shieldBreak", tankId: t.id, x: b.x, y: b.y });
-          } else {
-            state.events.push({ type: "shieldHit", tankId: t.id, x: b.x, y: b.y });
-          }
-          return false;
-        }
-        killTank(state, t, b);
+  // A fallen soldier's body is cover for their own team: it stops the other team's
+  // bullets until they respawn, while their teammates shoot straight through it.
+  const body = state.tanks.find((t) => !t.alive && t.team !== b.team && (t.x - b.x) ** 2 + (t.y - b.y) ** 2 <= hitR * hitR);
+  if (body) {
+    state.events.push({ type: "drop", tankId: b.owner, x: b.x, y: b.y });
+    return false;
+  }
+
+  for (const t of state.tanks) {
+    if (!t.alive || t.id === b.owner || t.team === b.team) continue;
+    // Where the shooter saw this enemy (lag compensation), else where it is now.
+    const seen = (b.rewind > 0 && config.rewind?.(t.id, state.tick + later - b.rewind)) || t;
+    // The whole stretch the bullet flew this tick, not just where it ended: at 10 px a
+    // tick it could otherwise skip past the edge of a soldier.
+    if (segmentHitsCircle(fromX, fromY, b.x, b.y, seen.x, seen.y, hitR)) {
+      if (t.spawnShieldMs > 0) {
+        state.events.push({ type: "shieldHit", tankId: t.id, x: b.x, y: b.y });
         return false;
       }
-    }
-    if (b.rangeLeft <= 0) {
-      state.events.push({ type: "drop", tankId: b.owner, x: b.x, y: b.y });
+      if (t.shieldMs > 0) {
+        // Each bullet uses up one hit; the last one pops the shield.
+        t.shieldHits--;
+        if (t.shieldHits <= 0) {
+          t.shieldMs = 0;
+          t.shieldHits = 0;
+          state.events.push({ type: "shieldBreak", tankId: t.id, x: b.x, y: b.y });
+        } else {
+          state.events.push({ type: "shieldHit", tankId: t.id, x: b.x, y: b.y });
+        }
+        return false;
+      }
+      killTank(state, t, b);
       return false;
     }
-    return true;
-  });
+  }
+  if (b.rangeLeft <= 0) {
+    state.events.push({ type: "drop", tankId: b.owner, x: b.x, y: b.y });
+    return false;
+  }
+  return true;
 }
 
 // `a` moved to within `max` of `center` (the short way round), wrapped to 0..2π.

@@ -36,6 +36,8 @@ import {
   SPEED_BOOST,
   SPIN_PAUSE_MS,
   TANK_RADIUS,
+  TANK_HIT_RADIUS,
+  BULLET_RADIUS,
   TICK_MS,
   UNLIMITED_AMMO,
 } from "./constants";
@@ -240,14 +242,141 @@ test("while the button is held the heading stays put, so a hold walks where you 
   assert.equal(tank.angle, pressedAt);
 });
 
-test("stale input (the server ran out of samples) doesn't turn a tap into a walk", () => {
+test("no sample for a tick freezes the soldier: no turn, walk or timers, while the world goes on", () => {
   const state = createState();
   const tank = addTank(state, map, "p1", "red");
-  const x = tank.x;
+  const other = addTank(state, map, "p2", "blue");
+  givePower(state, tank, "speed");
+  step(state, map, { p1: { held: true, pressed: true } }, config); // fires: cooldown, ammo down
+  for (let i = 0; i < 3; i++) step(state, map, { p1: { held: false, pressed: false } }, config);
+  const frozen = { ...tank };
+  const bullet = { ...state.bullets[0]! };
+  const otherAngle = other.angle;
+  for (let i = 0; i < 20; i++) step(state, map, { p1: [] }, config);
+  assert.deepEqual({ ...tank }, frozen, "the soldier didn't change at all");
+  assert.notEqual(other.angle, otherAngle, "others still turn");
+  assert.ok(state.bullets.length === 0 || state.bullets[0]!.x !== bullet.x, "bullets still fly");
+  // A held button over missing samples doesn't turn a tap into a walk either.
+  const before = { ...tank };
   step(state, map, { p1: { held: true, pressed: true } }, config);
-  for (let i = 0; i < 20; i++) step(state, map, { p1: { held: true, pressed: false, stale: true } }, config);
+  for (let i = 0; i < 20; i++) step(state, map, { p1: [] }, config);
   assert.equal(tank.driving, false);
-  assert.equal(tank.x, x);
+  assert.equal(tank.x, before.x);
+});
+
+test("a frozen soldier can still be pushed and shot", () => {
+  const state = createState();
+  const shooter = addTank(state, map, "a", "red");
+  const target = addTank(state, map, "b", "blue");
+  shooter.x = 300;
+  shooter.y = 300;
+  shooter.angle = 0;
+  target.x = 380;
+  target.y = 300;
+  step(state, map, { a: { held: false, pressed: true }, b: [] }, config);
+  for (let i = 0; i < 20 && target.alive; i++) step(state, map, { b: [] }, config);
+  assert.equal(target.alive, false);
+  // Pushing: a walking soldier shoves a frozen one.
+  const s2 = createState();
+  const walker = addTank(s2, map, "a", "red");
+  const still = addTank(s2, map, "b", "blue");
+  walker.x = 300;
+  walker.y = 300;
+  walker.angle = 0;
+  still.x = 300 + 2 * TANK_RADIUS + 1;
+  still.y = 300;
+  const x0 = still.x;
+  for (let i = 0; i < 40; i++) step(s2, map, { a: { held: true, pressed: i === 0 }, b: [] }, config);
+  assert.ok(still.x > x0 + 5, `pushed ${still.x - x0} px`);
+});
+
+test("two samples in one tick update the soldier exactly as two ticks of one sample would", () => {
+  const pattern = (i: number): TankInput => ({ held: i % 13 >= 6 && i % 13 < 11, pressed: i % 13 === 6 || i % 7 === 0 });
+  const a = createState();
+  const ta = addTank(a, map, "p1", "red");
+  const b = createState();
+  const tb = addTank(b, map, "p1", "red");
+  for (let i = 0; i < 200; i += 2) {
+    step(a, map, { p1: pattern(i) }, config);
+    step(a, map, { p1: pattern(i + 1) }, config);
+    step(b, map, { p1: [pattern(i), pattern(i + 1)] }, config);
+    step(b, map, { p1: [] }, config);
+    assert.equal(tb.angle, ta.angle, `heading at sample ${i + 1}`);
+    assert.equal(tb.x, ta.x);
+    assert.equal(tb.y, ta.y);
+    assert.equal(tb.ammo, ta.ammo);
+    assert.equal(tb.spinDir, ta.spinDir);
+  }
+});
+
+test("a bullet fired by the first of two samples in a tick also gets the second sample's move", () => {
+  const a = createState();
+  addTank(a, map, "p1", "red");
+  const b = createState();
+  addTank(b, map, "p1", "red");
+  const idle = { held: false, pressed: false };
+  step(a, map, { p1: { held: false, pressed: true } }, config);
+  step(a, map, { p1: idle }, config);
+  step(b, map, { p1: [{ held: false, pressed: true }, idle] }, config);
+  assert.equal(b.bullets.length, 1);
+  assert.ok(Math.abs(b.bullets[0]!.x - a.bullets[0]!.x) < 1e-9 && Math.abs(b.bullets[0]!.y - a.bullets[0]!.y) < 1e-9);
+});
+
+test("a burst follows the soldier's own samples, not the world clock", () => {
+  // Two taps 4 samples apart are one burst even if the server waited for the samples.
+  const state = createState();
+  const tank = addTank(state, map, "p1", "red");
+  step(state, map, { p1: { held: false, pressed: true } }, config);
+  const first = tank.aimAngle;
+  for (let i = 0; i < 3; i++) {
+    step(state, map, { p1: { held: false, pressed: false } }, config);
+    for (let k = 0; k < 10; k++) step(state, map, { p1: [] }, config); // 30 ticks frozen in all
+  }
+  step(state, map, { p1: { held: false, pressed: true } }, config);
+  assert.equal(tank.aimAngle, first, "still the same burst");
+});
+
+test("a press fires along its aim when it is close to the soldier's heading", () => {
+  const shoot = (aim: unknown) => {
+    const state = createState();
+    const tank = addTank(state, map, "p1", "red");
+    tank.angle = 1;
+    step(state, map, { p1: { held: false, pressed: true, aim } as TankInput }, config);
+    const b = state.bullets[0]!;
+    return { heading: tank.angle, shot: Math.atan2(b.vy, b.vx), burstLine: tank.aimAngle };
+  };
+  const near = 1 + (10 * Math.PI) / 180;
+  const r = shoot(near);
+  assert.equal(r.heading, near, "the soldier turns to the aim");
+  assert.ok(Math.abs(r.shot - near) < 1e-12, "and the shot goes along it");
+  assert.equal(r.burstLine, near, "a new burst lines up on it");
+  // Wrapped the other way round is the same heading.
+  assert.ok(Math.abs(shoot(near - 2 * Math.PI).heading - near) < 1e-12);
+  // Too far from what the server has, or junk: the soldier's own heading.
+  for (const junk of [1 + (20 * Math.PI) / 180, Number.NaN, Infinity, "1", null]) {
+    assert.equal(shoot(junk).heading, 1, `aim ${String(junk)} ignored`);
+  }
+});
+
+test("bullets hit a soldier within TANK_HIT_RADIUS of its centre, the size it is drawn", () => {
+  assert.equal(TANK_HIT_RADIUS, TANK_RADIUS + 2);
+  const pass = (offset: number) => {
+    const state = createState();
+    addTank(state, map, "a", "red");
+    const target = addTank(state, map, "b", "blue");
+    target.x = 500;
+    target.y = 300;
+    state.bullets.push({ id: 99, owner: "a", team: "red", x: 440, y: 300 + offset, vx: BULLET_SPEED, vy: 0, rangeLeft: 400, rewind: 0 });
+    for (let i = 0; i < 12 && target.alive; i++) {
+      target.x = 500;
+      target.y = 300;
+      step(state, map, {}, config);
+    }
+    return target.alive;
+  };
+  assert.equal(pass(TANK_HIT_RADIUS + BULLET_RADIUS - 0.5), false, "grazing the drawn body hits");
+  assert.equal(pass(TANK_RADIUS + BULLET_RADIUS + 1), false, "beyond the collision circle but on the body: hit");
+  assert.equal(pass(TANK_HIT_RADIUS + BULLET_RADIUS + 0.5), true, "clear of the body: miss");
 });
 
 test("a tap after a pause aims at the current heading, not the old line", () => {
@@ -1304,8 +1433,9 @@ test("a shield lasts SHIELD_MS at most, even with hits left", () => {
   assert.equal(target.alive, false);
 });
 
-// A shooter who saw the enemy 9 ticks ago (online, others are drawn in the past).
-function laggedShot(view: number) {
+// A shooter whose screen drew the enemy `lag` ticks ago (online, others are drawn in the
+// past): the press carries that server tick as `seen`.
+function laggedShot(lag: number) {
   const state = createState();
   const shooter = addTank(state, map, "a", "red");
   const target = addTank(state, map, "b", "blue");
@@ -1318,7 +1448,10 @@ function laggedShot(view: number) {
   target.y = 340;
   const history = (id: string, tick: number) => (id === "b" && tick < state.tick ? { x: 420, y: 300 } : null);
   const cfg = { holdMs: 60, rewind: history };
-  step(state, map, { a: { held: false, pressed: true, view } }, cfg);
+  for (let i = 0; i < 40; i++) step(state, map, { a: [] }, { holdMs: 60 }); // some history
+  target.x = 420;
+  target.y = 340;
+  step(state, map, { a: { held: false, pressed: true, seen: lag ? state.tick + 1 - lag : undefined } }, cfg);
   for (let i = 0; i < 30; i++) {
     target.x = 420;
     target.y = 340;
@@ -1329,17 +1462,32 @@ function laggedShot(view: number) {
 
 test("lag compensation: a shot hits the enemy where the shooter saw them", () => {
   assert.equal(laggedShot(9).alive, false, "hit where the shooter saw them");
+  assert.equal(laggedShot(MAX_REWIND_TICKS).alive, false, "up to 500 ms back");
   assert.equal(laggedShot(0).alive, true, "without rewind the shot misses: they moved away");
 });
 
-test("lag compensation is capped at MAX_REWIND_TICKS and ignores junk", () => {
+test("lag compensation rewinds to the seen tick, capped at MAX_REWIND_TICKS, ignoring junk", () => {
+  assert.equal(MAX_REWIND_TICKS, 30);
   const state = createState();
   const tank = addTank(state, map, "a", "red");
-  for (const view of [1e9, -5, Number.NaN, 3.6]) {
+  for (let i = 0; i < 100; i++) step(state, map, { a: [] }, config);
+  const cases: [unknown, number][] = [
+    [-7, MAX_REWIND_TICKS], // far in the past: capped
+    [1e9, 0], // in the future: no rewind
+    [Number.NaN, 0],
+    ["50", 0],
+    [undefined, 0],
+    ["now-12", 12], // the tick this press is applied on, minus 12
+    ["now-3.6", 4],
+  ];
+  for (const [seen, want] of cases) {
     tank.cooldownMs = 0;
-    step(state, map, { a: { held: false, pressed: true, view } }, config);
+    tank.ammo = 6;
+    const now = state.tick + 1;
+    const value = typeof seen === "string" && seen.startsWith("now-") ? now - Number(seen.slice(4)) : seen;
+    step(state, map, { a: { held: false, pressed: true, seen: value } as TankInput }, config);
     const b = state.bullets.at(-1)!;
-    assert.ok(b.rewind >= 0 && b.rewind <= MAX_REWIND_TICKS && Number.isInteger(b.rewind), `view ${view} -> ${b.rewind}`);
+    assert.equal(b.rewind, want, `seen ${String(seen)}`);
     for (let i = 0; i < 6; i++) step(state, map, {}, config);
   }
 });
@@ -1350,9 +1498,9 @@ test("a fast bullet grazing a soldier's edge between two ticks still hits", () =
   const target = addTank(state, map, "b", "blue");
   target.x = 500;
   target.y = 300;
-  // Its path passes 15.5 px from the centre (inside TANK_RADIUS + BULLET_RADIUS = 16), and
-  // its tick-end positions straddle the target, more than 15.5 px away from it each.
-  state.bullets.push({ id: 99, owner: "a", team: "red", x: 500 - 5.2 - BULLET_SPEED / 60, y: 315.5, vx: BULLET_SPEED, vy: 0, rangeLeft: 400, rewind: 0 });
+  // Its path passes 17.5 px from the centre (inside TANK_HIT_RADIUS + BULLET_RADIUS = 18), and
+  // its tick-end positions straddle the target, more than 18 px away from it each.
+  state.bullets.push({ id: 99, owner: "a", team: "red", x: 500 - 5.2 - BULLET_SPEED / 60, y: 317.5, vx: BULLET_SPEED, vy: 0, rangeLeft: 400, rewind: 0 });
   for (let i = 0; i < 4 && target.alive; i++) {
     target.x = 500;
     target.y = 300;

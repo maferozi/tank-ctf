@@ -15,6 +15,9 @@ export const MAX_HOLD_MS = 250;
 // Collision size of a soldier. 12 (was 14) matches the drawn body, so soldiers fit the gaps
 // they look like they fit (players' report: narrow aisles felt blocked).
 export const TANK_RADIUS = 12;
+// Bullets hit a soldier within this of its centre (plus the bullet's radius): the drawn body
+// reaches about 14 px. TANK_RADIUS stays the size for walls and pushing.
+export const TANK_HIT_RADIUS = TANK_RADIUS + 2;
 
 // Weights. When bodies push each other they move together at a speed set by their
 // weights (a light pusher against a heavy body barely moves it).
@@ -79,7 +82,10 @@ export const BULLET_RANGE = 410; // px travelled before the bullet drops
 // Lag compensation: a bullet is checked against enemies where they were on the shooter's
 // screen when they fired (other players are drawn a little in the past online), up to this
 // far back. More than that and the victim would die too long after reaching cover.
-export const MAX_REWIND_TICKS = 15; // 250 ms
+export const MAX_REWIND_TICKS = 30; // 500 ms
+// Online, a press carries the heading the shooter's screen fired along; the server uses it
+// when it is within this of the soldier's heading there (a safety net: they normally match).
+export const AIM_TOLERANCE = (15 * Math.PI) / 180;
 export const BULLET_FADE = 80; // last px of range drawn fading out
 // Only stops input bounce: well under the original's ~10 taps/s (100 ms apart), so every
 // real spray tap fires. At 100 it equalled that gap and dropped a quarter of real taps.

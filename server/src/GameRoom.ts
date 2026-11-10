@@ -14,6 +14,15 @@ import {
   MSG,
   RECONNECT_SECONDS,
   SNAPSHOT_EVERY_TICKS,
+  SnapshotHistory,
+  UDP_IDLE_MS,
+  buildDown,
+  decodeUp,
+  encodeDown,
+  encodePing,
+  newPeerState,
+  notePeerAck,
+  parseRtcSignal,
   TICK_MS,
   addTank,
   canStart,
@@ -44,17 +53,36 @@ import {
   type Roster,
   type SnapshotMessage,
   type SnapshotState,
-  type TankInput,
+  type TickInputs,
   type Team,
   type TeamMessage,
   type VoiceMessage,
+  type StateDelta,
+  type UdpPeerState,
 } from "@tank/shared";
 import { voiceConfig } from "./ice";
+import { ServerUdpPeer, loadNdc, udpConfigFromEnv } from "./udp";
+
+// The UDP game channel (see udp.ts): one per client that asks for it.
+interface UdpLink {
+  peer: ServerUdpPeer;
+  state: UdpPeerState; // acks, keyframes, event floor (shared/src/udp.ts)
+  lastRecv: number; // ms, last message from the client over the channel
+  lastSent: number;
+  active: boolean; // its snapshots go over the channel (not the WebSocket)
+  count: number; // messages this second (rate limit)
+  countResetAt: number;
+}
+const UDP_CONFIG = udpConfigFromEnv();
+const UDP_PING_MS = 250; // keepalive while no snapshots flow
+const RTC_BURST = 60; // signaling: offer/answer/candidates for a few attempts
+const RTC_PER_SECOND = 5;
 
 // Clients send about 60 input messages a second (more on 120 Hz screens); anything far
 // beyond that is abuse.
 const MAX_MESSAGES_PER_SECOND = 240;
 
+const IDLE = { held: false, pressed: false };
 const MAX_CATCH_UP_TICKS = 10; // after a stall, don't fast-forward more than this at once
 // TICK_STATS=1 logs how long ticks take (sim + snapshot), every STATS_EVERY_MS.
 const TICK_STATS = process.env.TICK_STATS === "1";
@@ -73,7 +101,7 @@ export class GameRoom extends Room {
   private rounds: MatchRounds = 1;
   private maps: string[] = roundMaps(1);
   private sim = createMatchState(1);
-  private queues = new Map<string, InputQueue>(); // per player: button samples, one per tick
+  private queues = new Map<string, InputQueue>(); // per player: button samples, each applied once, in order
   private players = new Map<string, Player>(); // in join order
   private pendingEvents: GameEvent[] = [];
   // Snapshots go out as deltas against the previous one; `lastSent` is a copy of it.
@@ -84,6 +112,14 @@ export class GameRoom extends Room {
   private needKeyframe = new Set<string>();
   private voiceLimits = new Map<string, RateLimiter>(); // per player: MSG.voice rate
   private configLimits = new Map<string, RateLimiter>(); // per player: MSG.voiceConfig requests
+  // UDP channel: recent snapshots and events (every client's deltas and event resends come
+  // from here), the links, and per client the last snapshot tick it got over the WebSocket.
+  private history = new SnapshotHistory();
+  private udp = new Map<string, UdpLink>();
+  private nextPeerId = 1;
+  private rtcLimits = new Map<string, RateLimiter>();
+  private wsLastTick = new Map<string, number>();
+  private resumeFrom = new Map<string, number>(); // back from the channel: resend events after this tick
   private accMs = 0;
   private stats = { ticks: 0, totalMs: 0, maxMs: 0, catchUps: 0, since: performance.now() };
 
@@ -121,6 +157,7 @@ export class GameRoom extends Room {
     });
     this.onMessage(MSG.voice, (client: Client, message: unknown) => this.relayVoice(client, message));
     this.onMessage(MSG.voiceConfig, (client: Client) => this.requestVoiceConfig(client));
+    this.onMessage(MSG.rtc, (client: Client, message: unknown) => this.onRtc(client, message));
 
     this.setSimulationInterval((deltaMs) => this.update(deltaMs), TICK_MS);
     this.publishRoster();
@@ -145,6 +182,7 @@ export class GameRoom extends Room {
     const player = this.players.get(client.sessionId);
     if (!player) return;
     player.away = true;
+    this.closeUdp(client.sessionId);
     if (this.queues.has(client.sessionId)) this.queues.set(client.sessionId, new InputQueue());
     this.sendRoster();
     this.allowReconnection(client, RECONNECT_SECONDS);
@@ -156,6 +194,7 @@ export class GameRoom extends Room {
     if (!player) return;
     player.away = false;
     this.needKeyframe.add(client.sessionId);
+    this.closeUdp(client.sessionId); // the client asks for a new channel
     // A reloaded page numbers its button samples from 1 again.
     if (this.queues.has(client.sessionId)) this.queues.set(client.sessionId, new InputQueue());
     this.sendRoster();
@@ -170,6 +209,10 @@ export class GameRoom extends Room {
     this.needKeyframe.delete(client.sessionId);
     this.voiceLimits.delete(client.sessionId);
     this.configLimits.delete(client.sessionId);
+    this.rtcLimits.delete(client.sessionId);
+    this.closeUdp(client.sessionId);
+    this.wsLastTick.delete(client.sessionId);
+    this.resumeFrom.delete(client.sessionId);
     removeTank(this.sim, client.sessionId);
     if (this.hostId === client.sessionId) this.hostId = this.players.keys().next().value ?? null;
     this.sendRoster();
@@ -190,6 +233,9 @@ export class GameRoom extends Room {
     // differ every game. It reaches the clients in the snapshots.
     this.sim = createMatchState(this.rounds, this.maps, (Math.random() * 0x7fffffff) | 0);
     this.positions.clear(); // a new match starts its ticks from 0 again
+    this.history.reset(); // a new epoch: channel acks from the last match mean nothing now
+    this.wsLastTick.clear();
+    this.resumeFrom.clear();
     this.queues.clear();
     this.pendingEvents = [];
     this.lastSent = null; // everyone starts with a keyframe
@@ -216,6 +262,7 @@ export class GameRoom extends Room {
   // Fixed-step loop: timers are not exactly 16.67 ms, so step as many ticks as real time
   // allows and keep the remainder.
   private update(deltaMs: number) {
+    this.pingUdp();
     if (this.phase !== "playing") return;
     this.accMs += deltaMs;
     let steps = 0;
@@ -247,8 +294,11 @@ export class GameRoom extends Room {
     // The final banner of the match is showing: when it ends, go back to the lobby
     // instead of letting the sim start a new match by itself.
     const finalBanner = this.sim.winner !== null && this.sim.match.round >= this.sim.match.rounds;
-    const inputs: Record<string, TankInput> = {};
-    for (const [id, queue] of this.queues) inputs[id] = queue.next();
+    // Each player's soldier takes exactly the samples its player sent, in order: none on a
+    // tick their next sample hasn't arrived (it waits), two while draining a backlog. A
+    // player who dropped out stands with the button up (timers and respawn keep going).
+    const inputs: TickInputs = {};
+    for (const [id, queue] of this.queues) inputs[id] = this.players.get(id)?.away ? IDLE : queue.next();
     step(this.sim, getMap(this.sim.mapId), inputs, this.simConfig);
     this.recordPositions();
     if (finalBanner && this.sim.winner === null) {
@@ -271,11 +321,16 @@ export class GameRoom extends Room {
 
   // A keyframe for everyone every KEYFRAME_EVERY_SNAPSHOTS and when the map changes;
   // otherwise one delta for everyone in sync, and keyframes for those who need one.
+  // Clients on the UDP channel get their own message there instead (sendUdpSnapshots).
   private sendSnapshot() {
     const { events: _lastStepEvents, ...live } = this.sim;
     const state = cloneDeep(live);
     const acks = Object.fromEntries([...this.queues].map(([id, queue]) => [id, queue.ack]));
     const events = this.pendingEvents;
+    const epoch = this.history.epoch;
+    this.history.push(state, events);
+    const onUdp = this.sendUdpSnapshots(acks);
+
     const base = this.lastSent;
     const keyframeDue = ++this.snapshotsSinceKeyframe >= KEYFRAME_EVERY_SNAPSHOTS;
     // diffState throws if the state's top-level fields changed (a new version of the
@@ -283,22 +338,159 @@ export class GameRoom extends Room {
     let delta: SnapshotMessage | null = null;
     if (base && !keyframeDue && base.mapId === state.mapId) {
       try {
-        delta = { base: base.tick, delta: diffState(base, state), events, acks };
+        delta = { base: base.tick, delta: diffState(base, state), events, acks, epoch };
       } catch {
         delta = null;
       }
     }
-    const full: SnapshotMessage = { full: state, events, acks };
+    const full: SnapshotMessage = { full: state, events, acks, epoch };
+    // Back from the channel: a keyframe, with every event since what it acked there.
+    const resumed = [...this.resumeFrom.keys()].flatMap((id) => this.clients.getById(id) ?? []).filter((c) => !onUdp.has(c));
+    const special = new Set([...onUdp, ...resumed]);
     if (!delta) {
-      this.broadcast(MSG.snapshot, full);
+      this.broadcast(MSG.snapshot, full, { except: [...special] });
       this.snapshotsSinceKeyframe = 0;
     } else {
-      const keyed = [...this.needKeyframe].flatMap((id) => this.clients.getById(id) ?? []);
-      this.broadcast(MSG.snapshot, delta, { except: keyed });
+      const keyed = [...this.needKeyframe].flatMap((id) => this.clients.getById(id) ?? []).filter((c) => !special.has(c));
+      this.broadcast(MSG.snapshot, delta, { except: [...special, ...keyed] });
       for (const client of keyed) client.send(MSG.snapshot, full);
     }
+    for (const client of resumed) {
+      const from = this.resumeFrom.get(client.sessionId)!;
+      client.send(MSG.snapshot, { full: state, events: [], ev: this.history.eventsAfter(from), acks, epoch } satisfies SnapshotMessage);
+      this.resumeFrom.delete(client.sessionId);
+    }
+    for (const client of this.clients) if (!onUdp.has(client)) this.wsLastTick.set(client.sessionId, state.tick);
     this.needKeyframe.clear();
     this.lastSent = state;
+  }
+
+  // ---- UDP game channel ----
+
+  // Sends this snapshot to every client whose channel is live (it sent something within
+  // UDP_IDLE_MS), each as a delta against what that client acked. Returns those clients.
+  private sendUdpSnapshots(acks: Record<string, number>): Set<Client> {
+    const out = new Set<Client>();
+    if (this.udp.size === 0) return out;
+    const now = performance.now();
+    const cache = new Map<number, StateDelta | null>(); // clients with the same ack share a delta
+    for (const [id, link] of this.udp) {
+      const client = this.clients.getById(id);
+      const live = !!client && link.peer.open && now - link.lastRecv < UDP_IDLE_MS && !this.players.get(id)?.away;
+      if (live && !link.active) {
+        link.active = true;
+        // Events up to the last WebSocket snapshot already reached it.
+        const ws = this.wsLastTick.get(id);
+        if (ws !== undefined) {
+          link.state.floor = ws;
+          link.state.floorEpoch = this.history.epoch;
+        }
+      } else if (!live && link.active) {
+        this.deactivate(id, link);
+      }
+      if (!link.active || !client) continue;
+      try {
+        const msg = buildDown(this.history, link.state, acks, now, cache);
+        if (!msg) continue;
+        link.peer.send(encodeDown(msg));
+        link.lastSent = now;
+        out.add(client);
+      } catch (err) {
+        console.warn("udp: snapshot failed", err);
+        this.deactivate(id, link);
+      }
+    }
+    return out;
+  }
+
+  // Back to the WebSocket: a keyframe there, with the events it may have missed.
+  private deactivate(id: string, link: UdpLink) {
+    if (!link.active) return;
+    link.active = false;
+    const s = link.state;
+    const epoch = this.history.epoch;
+    const from = Math.max(s.ackEpoch === epoch ? s.ack : -1, s.floorEpoch === epoch ? s.floor : -1);
+    this.resumeFrom.set(id, from);
+    this.needKeyframe.add(id);
+  }
+
+  private pingUdp() {
+    if (this.udp.size === 0) return;
+    const now = performance.now();
+    for (const link of this.udp.values()) {
+      if (link.peer.open && now - link.lastSent >= UDP_PING_MS) {
+        link.peer.send(encodePing());
+        link.lastSent = now;
+      }
+    }
+  }
+
+  private onRtc(client: Client, raw: unknown) {
+    const id = client.sessionId;
+    if (!this.players.has(id)) return;
+    let limit = this.rtcLimits.get(id);
+    if (!limit) this.rtcLimits.set(id, (limit = new RateLimiter(RTC_BURST, RTC_PER_SECOND)));
+    if (!limit.take(performance.now())) return;
+    const signal = parseRtcSignal(raw);
+    if (!signal) return;
+    if (signal.kind === "hello") void this.startUdp(client);
+    else if (signal.kind === "close") {
+      const link = this.udp.get(id);
+      if (link?.peer.id === signal.id) this.closeUdp(id);
+    } else this.udp.get(id)?.peer.handleSignal(signal);
+  }
+
+  private async startUdp(client: Client) {
+    const id = client.sessionId;
+    if (!UDP_CONFIG.enabled) return;
+    const ndc = await loadNdc();
+    if (!ndc || !this.clients.getById(id) || this.players.get(id)?.away) return;
+    this.closeUdp(id);
+    const peerId = this.nextPeerId++;
+    const peer = new ServerUdpPeer(
+      ndc,
+      peerId,
+      UDP_CONFIG,
+      (signal) => this.clients.getById(id)?.send(MSG.rtc, signal),
+      (bytes) => this.onUdpMessage(id, peerId, bytes),
+      () => {
+        const link = this.udp.get(id);
+        if (link?.peer.id !== peerId) return;
+        this.udp.delete(id);
+        this.deactivate(id, link);
+        this.clients.getById(id)?.send(MSG.rtc, { kind: "close", id: peerId });
+      },
+    );
+    if (peer.closed) return;
+    this.udp.set(id, { peer, state: newPeerState(), lastRecv: -Infinity, lastSent: -Infinity, active: false, count: 0, countResetAt: 0 });
+  }
+
+  private onUdpMessage(id: string, peerId: number, bytes: Uint8Array) {
+    const link = this.udp.get(id);
+    if (!link || link.peer.id !== peerId) return;
+    const now = performance.now();
+    if (now >= link.countResetAt) {
+      link.count = 0;
+      link.countResetAt = now + 1000;
+    }
+    if (++link.count > MAX_MESSAGES_PER_SECOND) return; // flood: drop, the WebSocket rule would kick
+    const up = decodeUp(bytes);
+    if (!up) return;
+    link.lastRecv = now;
+    notePeerAck(link.state, up);
+    if (up.samples.length && !this.players.get(id)?.away) this.queues.get(id)?.push(up.samples);
+  }
+
+  private closeUdp(id: string) {
+    const link = this.udp.get(id);
+    if (!link) return;
+    this.udp.delete(id);
+    this.deactivate(id, link);
+    link.peer.close();
+  }
+
+  onDispose() {
+    for (const id of [...this.udp.keys()]) this.closeUdp(id);
   }
 
   // Voice chat signaling: passed on only between two players who may hear each other
@@ -333,8 +525,9 @@ export class GameRoom extends Room {
     });
   }
 
-  // Lag compensation: where every living soldier was over the last MAX_REWIND_TICKS ticks,
-  // so a shot is checked against enemies where the shooter saw them (see Bullet.rewind).
+  // Lag compensation: where every living soldier was over the last MAX_REWIND_TICKS ticks
+  // (500 ms), so a shot is checked against enemies where the shooter saw them: a press
+  // carries `seen`, the server tick its screen drew the others at (see Bullet.rewind).
   private positions = new Map<number, Map<string, { x: number; y: number }>>();
   private readonly simConfig: SimConfig = {
     holdMs: DEFAULT_HOLD_MS,

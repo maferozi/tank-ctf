@@ -2,6 +2,7 @@ import type { Team } from "./map";
 import type { MatchRounds } from "./match";
 import type { InputFrame } from "./prediction";
 import type { GameEvent, GameState } from "./sim";
+import type { EventGroup } from "./udp";
 
 // Messages between the web client and the game server.
 
@@ -29,6 +30,8 @@ export const MSG = {
   voice: "voice",
   // server -> client: VoiceConfig (ICE servers), on join; client -> server: "send it again".
   voiceConfig: "voiceCfg",
+  // UDP game channel signaling, both ways: RtcSignal (see udp.ts and docs/NETCODE.md).
+  rtc: "rtc",
 } as const;
 
 // Seconds a dropped player's soldier waits for them to reconnect (refresh, network blip).
@@ -82,6 +85,10 @@ export interface SnapshotMessage {
   delta?: StateDelta;
   events: GameEvent[];
   acks: Record<string, number>;
+  epoch?: number; // the match (ticks start over every match); see udp.ts
+  // Only on the first snapshot after a client comes back from the UDP channel: the events
+  // since the newest snapshot it acked there, grouped by snapshot tick (replaces `events`).
+  ev?: EventGroup[];
 }
 
 export interface Player {

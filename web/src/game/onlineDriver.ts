@@ -1,9 +1,8 @@
 import {
   DEFAULT_HOLD_MS,
+  SNAPSHOT_EVERY_TICKS,
   TANK_RADIUS,
-  MAX_REWIND_TICKS,
   DEFAULT_MAP,
-  MSG,
   Predictor,
   TICK_MS,
   copyInto,
@@ -52,6 +51,16 @@ const OFFSET_SAMPLES = 30; // the last second of snapshots
 // Longest a late snapshot is bridged by carrying others on along their last motion.
 const EXTRAPOLATE_MS = 120;
 const PREDICTED_EVENTS = new Set<GameEvent["type"]>(["fire", "drop", "dry", "crateBreak"]);
+// Game stress (voice.setGameStress): over each STRESS_WINDOW_MS, the share
+// of snapshots that never arrived (lost, or skipped on the UDP channel) and the recent
+// lateness. Above the "on" thresholds the game is struggling and voice may back off; it
+// takes STRESS_CALM_WINDOWS calm windows in a row (below the "off" thresholds) to clear.
+const STRESS_WINDOW_MS = 1000;
+const STRESS_LOSS_ON = 0.05;
+const STRESS_LOSS_OFF = 0.02;
+const STRESS_LATE_ON_MS = 60;
+const STRESS_LATE_OFF_MS = 30;
+const STRESS_CALM_WINDOWS = 3;
 
 interface Timed {
   serverMs: number;
@@ -66,12 +75,28 @@ interface Timed {
 export function createOnlineDriver(session: Session): Driver {
   const { room } = session;
   const me = room.sessionId;
+  // Game stress for voice (see STRESS_*).
+  const setGameStress = (on: boolean) => {
+    try {
+      session.voice.setGameStress(on);
+    } catch {
+      // Voice must never break the game.
+    }
+  };
+  let stressed = false;
+  let calmWindows = 0;
+  let windowStart = performance.now();
+  let windowGot = 0;
+  let windowMissed = 0;
+  let lastTick: number | null = null;
   const snaps: Timed[] = [];
   // Your shots are checked against the others where your screen shows them (lag
-  // compensation): the server rewinds them by your view lag, and your own prediction looks
-  // them up in the snapshots it is drawing from.
+  // compensation): each press carries `seen`, the server tick the others were drawn at, the
+  // server rewinds them to that tick, and your own prediction looks them up in the
+  // snapshots it is drawing from. An absolute tick, not an offset from your predicted
+  // present: the server may apply your press on a different tick than you predicted it.
   const predictor = new Predictor(me, { holdMs: DEFAULT_HOLD_MS, rewind: seenAt });
-  let viewTicks = 0; // how far behind your predicted present the others are drawn
+  let seenTick: number | undefined; // server tick of the others as last drawn
 
   function seenAt(id: string, tick: number): { x: number; y: number } | null {
     for (let i = snaps.length - 1; i > 0; i--) {
@@ -133,6 +158,13 @@ export function createOnlineDriver(session: Session): Driver {
     keyframes: 0,
     deltas: 0,
     keyframeRequests: 0, // deltas that didn't apply (should stay 0)
+    transport: session.net.transport, // "udp" (WebRTC data channel) or "ws"
+    udpSnapshots: 0, // snapshots that came over the channel
+    udpSkipped: 0, // channel messages skipped (base missing, late or duplicate)
+    udpKeyframes: 0,
+    fallbacks: 0, // times the channel failed and the game went back to the WebSocket
+    missedSnapshots: 0, // snapshot ticks never shown (lost or skipped)
+    stressed: false, // told voice the game is struggling
     offsetResets: 0, // clock re-baselined after a run of starved frames
     extrapolated: 0, // frames where others were carried past the newest snapshot
     maxExtrapolationMs: 0,
@@ -151,6 +183,7 @@ export function createOnlineDriver(session: Session): Driver {
 
   const unsubscribe = session.onSnapshot((snap: Snapshot) => {
     const serverMs = snap.state.tick * TICK_MS;
+    noteStress(snap.state.tick);
     // A new match restarts the server's clock: start over.
     if (snaps.length && serverMs <= snaps[snaps.length - 1]!.serverMs) {
       snaps.length = 0;
@@ -184,6 +217,11 @@ export function createOnlineDriver(session: Session): Driver {
     stats.keyframes = session.decoder.keyframes;
     stats.deltas = session.decoder.deltas;
     stats.keyframeRequests = session.decoder.failures;
+    stats.transport = session.net.transport;
+    stats.udpSnapshots = session.net.stats.udpSnapshots;
+    stats.udpSkipped = session.net.udpDecoder.skipped;
+    stats.udpKeyframes = session.net.udpDecoder.keyframes;
+    stats.fallbacks = session.net.stats.fallbacks;
     if (wasAlive && after && after.alive) {
       const dx = bx - after.x;
       const dy = by - after.y;
@@ -202,6 +240,33 @@ export function createOnlineDriver(session: Session): Driver {
       correction.x = correction.y = 0;
     }
   });
+
+  function noteStress(tick: number) {
+    if (lastTick !== null && tick > lastTick) {
+      const missed = Math.max(0, Math.round((tick - lastTick) / SNAPSHOT_EVERY_TICKS) - 1);
+      windowMissed += missed;
+      stats.missedSnapshots += missed;
+    }
+    lastTick = tick;
+    windowGot++;
+    const now = performance.now();
+    if (now - windowStart < STRESS_WINDOW_MS) return;
+    const loss = windowMissed / Math.max(1, windowGot + windowMissed);
+    windowStart = now;
+    windowGot = windowMissed = 0;
+    if (!stressed && (loss > STRESS_LOSS_ON || jitterP95 > STRESS_LATE_ON_MS)) {
+      stressed = true;
+      calmWindows = 0;
+      setGameStress(true);
+    } else if (stressed) {
+      calmWindows = loss < STRESS_LOSS_OFF && jitterP95 < STRESS_LATE_OFF_MS ? calmWindows + 1 : 0;
+      if (calmWindows >= STRESS_CALM_WINDOWS) {
+        stressed = false;
+        setGameStress(false);
+      }
+    }
+    stats.stressed = stressed;
+  }
 
   function recordLateness(ms: number) {
     lateness[latenessNext] = ms;
@@ -252,13 +317,13 @@ export function createOnlineDriver(session: Session): Driver {
       const events: GameEvent[] = [];
       while (acc >= TICK_MS) {
         const input = button.consume();
-        if (input.pressed) input.view = viewTicks;
+        if (input.pressed && seenTick !== undefined) input.seen = seenTick;
         const { frame, events: tickEvents } = predictor.tick(input);
         (frames ??= []).push(frame);
         for (const e of tickEvents) if (e.tankId === me && PREDICTED_EVENTS.has(e.type)) events.push(e);
         acc -= TICK_MS;
       }
-      if (frames) room.send(MSG.input, frames satisfies InputMessage);
+      if (frames) session.sendInput(frames satisfies InputMessage);
       const decay = Math.exp(-dt / CORRECTION_MS);
       correction.x *= decay;
       correction.y *= decay;
@@ -282,7 +347,7 @@ export function createOnlineDriver(session: Session): Driver {
 
       // Everyone else: interpolated from snapshots, delayMs in the past.
       const t = now - clockOffset - delayMs;
-      viewTicks = Math.max(0, Math.min(MAX_REWIND_TICKS, Math.round(predictor.state.tick - t / TICK_MS)));
+      seenTick = Math.max(0, Math.round(t / TICK_MS));
       let next = -1;
       for (let i = 0; i < snaps.length; i++) {
         if (snaps[i]!.serverMs > t) {
@@ -371,6 +436,7 @@ export function createOnlineDriver(session: Session): Driver {
       return { prev: display, curr: display, alpha: 1, events };
     },
     dispose() {
+      if (stressed) setGameStress(false);
       unsubscribe();
       unsubscribeRoster();
     },
