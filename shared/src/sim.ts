@@ -571,6 +571,7 @@ export function resetRound(state: GameState, map: GameMap): void {
     Object.assign(t, {
       alive: true,
       respawnMs: 0,
+      spawnShieldMs: SPAWN_SHIELD_MS, // protected at round start, like after a respawn
       held: false,
       pressMs: 0,
       driving: false,
@@ -582,7 +583,6 @@ export function resetRound(state: GameState, map: GameMap): void {
       sincePressTicks: NEVER_PRESSED,
       vx: 0,
       vy: 0,
-      spawnShieldMs: 0,
     });
     clearPowers(t);
   }
