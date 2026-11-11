@@ -335,6 +335,12 @@ falls back to the WebSocket and back mid-match, with a tap at each switch firing
 once, in order), and real Chrome (Playwright): a tab plays over the channel (`__net.transport`
 "udp"), and a tab without `RTCPeerConnection` plays the same match on the WebSocket.
 
+## Blocks on the same timeline as nearby soldiers (10 Nov 2026)
+Blocks (crates, desks, beds) are drawn from the server's interpolated timeline, like other
+players, and only within ~90 px of you slide over to your prediction, so your own pushing stays
+instant. Drawn all from the prediction, a bed moved by someone else looked as if a soldier
+(drawn a little in the past) stood on it.
+
 ## Possible later improvements
 1. Measure the adaptive delay on the deployed server and a real phone; tune its floor (70 ms)
    and the 2 × p95 margin from that.

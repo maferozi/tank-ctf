@@ -1508,3 +1508,42 @@ test("a fast bullet grazing a soldier's edge between two ticks still hits", () =
   }
   assert.equal(target.alive, false);
 });
+
+test("a soldier can't wedge apart two beds and squeeze between them (rigid corners)", () => {
+  const classroom = getMap("classroom");
+  const beds = createState(classroom).crates.filter((c) => c.bed);
+  const onBed = (x: number, y: number) => beds.some((c) => contact({ pos: { x, y }, shape: "circle", size: TANK_RADIUS + 2, mass: 1 }, { pos: c, shape: "box", size: BED_SIZE / 2, mass: 1 }));
+  const reach = BED_SIZE / 2 + TANK_RADIUS + 12;
+  let tried = 0;
+  // Every gap between two neighbouring beds, walked into from both sides, starting only on
+  // open floor (beds are packed 12 px apart in both directions).
+  for (const a of beds) {
+    for (const b of beds) {
+      const across = a.y === b.y && b.x > a.x && b.x - a.x < 130; // gap runs up-down
+      const down = a.x === b.x && b.y > a.y && b.y - a.y < 130; // gap runs left-right
+      if (!across && !down) continue;
+      const gx = (a.x + b.x) / 2;
+      const gy = (a.y + b.y) / 2;
+      for (const side of [-1, 1]) {
+        const x = across ? gx : gx + side * reach;
+        const y = across ? gy + side * reach : gy;
+        if (onBed(x, y)) continue;
+        tried++;
+        const state = createState(classroom);
+        const t = addTank(state, classroom, "p", "red");
+        t.x = x;
+        t.y = y;
+        t.angle = across ? (side < 0 ? Math.PI / 2 : -Math.PI / 2) : side < 0 ? 0 : Math.PI;
+        const before = JSON.stringify(state.crates);
+        for (let i = 0; i < 300; i++) {
+          t.cooldownMs = 1e9; // walk in without firing
+          step(state, classroom, { p: { held: true, pressed: i === 0 } }, config);
+        }
+        const through = across ? Math.sign(t.y - gy) === -side && Math.abs(t.y - gy) > BED_SIZE / 2 : Math.sign(t.x - gx) === -side && Math.abs(t.x - gx) > BED_SIZE / 2;
+        assert.ok(!through, `got through the gap between beds at ${a.x},${a.y} and ${b.x},${b.y}`);
+        assert.equal(JSON.stringify(state.crates), before, "beds touched only at their corners stay put");
+      }
+    }
+  }
+  assert.ok(tried >= 16, `tried ${tried} gaps`);
+});

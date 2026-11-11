@@ -695,8 +695,8 @@ function tankBody(t: Tank): Body {
 }
 
 function crateBody(c: Crate): Body {
-  if (c.bed) return heavyBoxBody(c, BED_SIZE, BED_MASS);
-  if (c.desk) return heavyBoxBody(c, DESK_SIZE, DESK_MASS);
+  if (c.bed) return { ...heavyBoxBody(c, BED_SIZE, BED_MASS), rigidCorners: true };
+  if (c.desk) return { ...heavyBoxBody(c, DESK_SIZE, DESK_MASS), rigidCorners: true };
   return heavyBoxBody(c, CRATE_SIZE);
 }
 
