@@ -9,6 +9,11 @@ export interface Body {
   shape: "circle" | "box";
   size: number; // radius for a circle, half-width for a box
   mass: number;
+  // Furniture (beds, desks): a soldier touching it only at a corner doesn't move or turn it,
+  // the soldier gives way instead. Otherwise a soldier walking at the narrow gap between two
+  // beds pushed both corners like a wedge and squeezed through in ~3 s. Pushing a side still
+  // moves (and, off-centre, turns) it.
+  rigidCorners?: boolean;
 }
 
 export interface Contact {
@@ -39,7 +44,7 @@ export function resolveContacts(bodies: Body[], map: GameMap, onPush?: (b: Body)
         const c = contact(a, b);
         if (!c) continue;
         any = true;
-        const shareA = b.mass / (a.mass + b.mass);
+        const shareA = cornerOnly(a, b) ? 1 : cornerOnly(b, a) ? 0 : b.mass / (a.mass + b.mass);
         let left = c.depth;
         const movedA = shove(a, map, -c.nx * c.depth * shareA, -c.ny * c.depth * shareA, c.px, c.py);
         const movedB = shove(b, map, c.nx * c.depth * (1 - shareA), c.ny * c.depth * (1 - shareA), c.px, c.py);
@@ -52,6 +57,14 @@ export function resolveContacts(bodies: Body[], map: GameMap, onPush?: (b: Body)
     }
     if (!any) break;
   }
+}
+
+// Is `circle` a soldier touching `box`, a rigid-cornered block, only at one of its corners
+// (its centre outside both of the box's face bands)?
+function cornerOnly(circle: Body, box: Body): boolean {
+  if (circle.shape !== "circle" || box.shape !== "box" || !box.rigidCorners) return false;
+  const local = toLocal(box, circle.pos.x, circle.pos.y);
+  return Math.abs(local.x) > box.size && Math.abs(local.y) > box.size;
 }
 
 // Moves a body by (dx, dy), axis by axis so it slides along walls. Returns how far it

@@ -143,6 +143,10 @@ face still pushes it straight and you stay behind it. The grip fades towards the
 round and slip off. Steeper headings slide along the face, and a soldier who only clips a corner
 glances off. Standing beside a corner (your centre past the face's edge) you are not gripped:
 you slip past the corner instead of sticking to it.
+- Beds and desks have rigid corners: a soldier touching one only at a corner doesn't move or
+  turn it, the soldier stops instead. So nobody wedges two packed beds apart and squeezes
+  through the 12 px gap between them; push a bed by its side to move it (off-centre it still
+  turns).
 
 ## Power-up boxes
 - Purple "?" boxes. Touch one (walk into it) to get a random power; shooting it does nothing.

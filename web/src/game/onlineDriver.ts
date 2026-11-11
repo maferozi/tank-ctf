@@ -14,6 +14,10 @@ import {
   type InputMessage,
   type Snapshot,
   type Tank,
+  BED_SIZE,
+  CRATE_SIZE,
+  DESK_SIZE,
+  type Crate,
 } from "@tank/shared";
 import { Blender } from "./blend";
 import type { Driver } from "./driver";
@@ -143,6 +147,9 @@ export function createOnlineDriver(session: Session): Driver {
   const flags: Flag[] = [];
   let mineSlot: Tank | null = null;
   const nearSlots = new Map<string, Tank>(); // others drawn closer to the present (see below)
+  const crates: Crate[] = [];
+  const crateSlots = new Map<number, Crate>();
+  const predictedCrates = new Map<number, Crate>();
 
   // Dev-only health numbers, readable as window.__net in the browser console.
   const stats = {
@@ -289,6 +296,39 @@ export function createOnlineDriver(session: Session): Driver {
     return best;
   }
 
+  // Blocks follow the same timeline as the soldiers around them: the server's (a little in
+  // the past, like other players), except near you, where they slide over to your prediction
+  // so your own pushing stays instant. Drawn all from the prediction, a bed someone else had
+  // moved looked as if the other soldier stood on it.
+  function blocksNearYou(others: GameState, predicted: GameState, mine: Tank | null): Crate[] {
+    predictedCrates.clear();
+    for (const c of predicted.crates) predictedCrates.set(c.id, c);
+    crates.length = 0;
+    for (const c of others.crates) {
+      const p = predictedCrates.get(c.id);
+      if (!p || !mine) {
+        crates.push(c);
+        continue;
+      }
+      const reach = NEAR_PX + (c.bed ? BED_SIZE : c.desk ? DESK_SIZE : CRATE_SIZE) / 2;
+      const d = Math.hypot(p.x - mine.x, p.y - mine.y);
+      if (d >= reach) {
+        crates.push(c);
+        continue;
+      }
+      const w = Math.min(1, (reach - d) / NEAR_PX);
+      const slot = copyInto(crateSlots.get(c.id) ?? null, c);
+      crateSlots.set(c.id, slot);
+      slot.x = c.x + (p.x - c.x) * w;
+      slot.y = c.y + (p.y - c.y) * w;
+      let da = p.angle - c.angle;
+      da -= Math.round(da / (Math.PI * 2)) * Math.PI * 2;
+      slot.angle = c.angle + da * w;
+      crates.push(slot);
+    }
+    return crates;
+  }
+
   function nearYou(x: Tank, mine: Tank | null, predicted: GameState): Tank {
     if (!mine || !x.alive) return x;
     const p = findTank(predicted, x.id);
@@ -423,6 +463,7 @@ export function createOnlineDriver(session: Session): Driver {
         flags.push(mineToo && (mineToo.carrier === me || f.carrier === me) ? mineToo : f);
       }
       Object.assign(display, predicted);
+      display.crates = blocksNearYou(others, predicted, mine);
       display.tanks = tanks;
       display.bullets = bullets;
       display.flags = flags;
