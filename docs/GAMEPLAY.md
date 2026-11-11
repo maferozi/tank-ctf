@@ -44,8 +44,9 @@ while the first is still down counts as a tap too.
   next round. Desks, beds and power boxes never break. Every press fires first, so walking straight
   at a crate in range breaks it; a crate still gets shoved when you bump into it from the side.
 - One hit kills, unless the target has a shield (see power-ups). Respawn after `RESPAWN_MS` (8 s) on your
-  team's respawn square; the body lies where it fell until then. A soldier who just respawned
-  can't be hurt for `SPAWN_SHIELD_MS` (2 s): a faint blinking bubble, bullets stop on it.
+  team's respawn square; the body lies where it fell until then. A soldier who just respawned,
+  and everyone at the start of a round, can't be hurt for `SPAWN_SHIELD_MS` (2 s): a bubble
+  that fades out in its last half second; bullets stop on it.
 - A fallen body is cover for its own team: it stops the other team's bullets until that soldier
   respawns. Teammates' bullets pass straight through it. Bodies are solid and can be pushed (see
   weights below), and the cover moves with them.

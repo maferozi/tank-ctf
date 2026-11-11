@@ -348,8 +348,10 @@ function drawSoldierAt(
 
   if (t.shieldMs > 0) drawShield(ctx, t, x, y, nowMs);
   else if (t.spawnShieldMs > 0) {
-    // Spawn protection: a faint bubble that blinks, so attackers see shots won't land.
-    ctx.globalAlpha = 0.35 + 0.25 * Math.sin(nowMs / 70);
+    // Spawn protection: a clear bubble that fades out over its last half second, so
+    // attackers see shots won't land and everyone sees when it ends.
+    const left = t.spawnShieldMs;
+    ctx.globalAlpha = (left < 500 ? left / 500 : 1) * (0.8 + 0.2 * Math.sin(nowMs / 90));
     blitAt(ctx, shieldSprite(), x, y);
     ctx.globalAlpha = 1;
   }

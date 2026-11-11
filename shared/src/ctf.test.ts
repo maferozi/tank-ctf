@@ -19,7 +19,7 @@ import {
 } from "./constants";
 import { DEFAULT_MAP } from "./map";
 import { getMap } from "./maps";
-import { addTank, createState, givePower, step, type GameEvent, type GameState, type TankInput } from "./sim";
+import { addTank, createState, givePower, resetRound, step, type GameEvent, type GameState, type TankInput } from "./sim";
 
 const map = DEFAULT_MAP;
 const config = { holdMs: 60 };
@@ -392,4 +392,16 @@ test("a respawned soldier is protected for SPAWN_SHIELD_MS, then can be shot", (
 
 test("a power shield stops SHIELD_HITS bullets (5)", () => {
   assert.equal(SHIELD_HITS, 5);
+});
+
+test("everyone is protected for SPAWN_SHIELD_MS at the start of a round", () => {
+  const { state, red, blue } = setup();
+  blue.x = red.x + 80;
+  blue.y = red.y;
+  resetRound(state, map);
+  for (const t of state.tanks) assert.equal(t.spawnShieldMs, SPAWN_SHIELD_MS);
+  run(state, 1);
+  assert.ok(blue.alive);
+  run(state, ticks(SPAWN_SHIELD_MS) + 1);
+  for (const t of state.tanks) assert.equal(t.spawnShieldMs, 0);
 });
